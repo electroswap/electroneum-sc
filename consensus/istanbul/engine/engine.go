@@ -590,8 +590,19 @@ func (e *Engine) ReadVote(header *types.Header) (candidate common.Address, autho
 }
 
 func getExtra(header *types.Header) (*types.QBFTExtra, error) {
+	// A sub-32-byte (IstanbulExtraVanity) Extra means the QBFT extra-data has not
+	// been written yet. This is the normal state of a freshly-built header in
+	// Prepare/Seal/CommitHeader, whose Extra is empty until we add the validators,
+	// seals, etc., so bootstrap an empty QBFTExtra with padded vanity for the
+	// write path to populate.
+	//
+	// Keep this lenient: turning it into an error would make Prepare fail and halt
+	// block production. It is not a validation gap on the read side either -- a
+	// header reaching ReadVote/snapApplyHeader is an already-finalized block that
+	// always carries a full Extra (verifyHeader rejects undecodable extra-data and
+	// verifyCommittedSeals requires a 2F+1 committed-seal quorum), so this branch
+	// is never taken for such headers.
 	if len(header.Extra) < types.IstanbulExtraVanity {
-		// In this scenario, the header extradata only contains client specific information, hence create a new qbftExtra and set vanity
 		vanity := append(header.Extra, bytes.Repeat([]byte{0x00}, types.IstanbulExtraVanity-len(header.Extra))...)
 		return &types.QBFTExtra{
 			VanityData:    vanity,
