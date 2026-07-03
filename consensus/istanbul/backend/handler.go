@@ -88,7 +88,17 @@ func (sb *Backend) HandleMsg(addr common.Address, msg p2p.Msg) (bool, error) {
 		}
 		sb.knownMessages.Add(hash, true)
 
-		go sb.istanbulEventMux.Post(istanbul.MessageEvent{
+		// Deliver synchronously so the p2p read loop cannot outrun the single
+		// istanbul event consumer. A detached `go Post` here lets a remote peer
+		// enqueue consensus frames faster than core.handleEvents drains them,
+		// accumulating unbounded blocked goroutines that each pin a full payload
+		// in heap until the node OOMs. Posting inline applies backpressure: the
+		// per-peer read loop blocks until the consumer accepts the event, which
+		// bounds in-flight pre-validation payloads and propagates flow control
+		// down to TCP. The consumer path (handleEvents -> Gossip/Broadcast) never
+		// re-acquires coreMu and dispatches peer writes on their own goroutines,
+		// so this cannot deadlock or self-block on the mux.
+		sb.istanbulEventMux.Post(istanbul.MessageEvent{
 			Code:    msg.Code,
 			Payload: data,
 		})
