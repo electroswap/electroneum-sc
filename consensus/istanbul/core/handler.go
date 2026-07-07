@@ -23,6 +23,7 @@ import (
 	"github.com/electroneum/electroneum-sc/common"
 	"github.com/electroneum/electroneum-sc/consensus/istanbul"
 	qbfttypes "github.com/electroneum/electroneum-sc/consensus/istanbul/types"
+	"github.com/electroneum/electroneum-sc/crypto"
 	"github.com/electroneum/electroneum-sc/log"
 	"github.com/electroneum/electroneum-sc/rlp"
 )
@@ -247,18 +248,28 @@ func (c *core) handleTimeoutMsg() {
 func (c *core) verifySignatures(m qbfttypes.QBFTMessage) error {
 	logger := c.currentLogger(true, m)
 
-	// Anonymous function to verify the signature of a single message or payload
+	// Memoize verified (payload, signature) pairs within this message so a justification
+	// containing many identical signed payloads only pays for one ecrecover. This preserves
+	// fail-fast semantics (the first bad signature still errors) while removing the CPU
+	// amplification from duplicate entries.
+	verified := make(map[common.Hash]common.Address)
 	verify := func(m qbfttypes.QBFTMessage) error {
 		payload, err := m.EncodePayloadForSigning()
 		if err != nil {
 			logger.Error("IBFT: invalid message payload", "err", err)
 			return err
 		}
+		key := crypto.Keccak256Hash(payload, m.Signature())
+		if source, ok := verified[key]; ok {
+			m.SetSource(source)
+			return nil
+		}
 		source, err := c.validateFn(payload, m.Signature())
 		if err != nil {
 			logger.Error("IBFT: invalid message signature", "err", err)
 			return errInvalidSigner
 		}
+		verified[key] = source
 		m.SetSource(source)
 		return nil
 	}
