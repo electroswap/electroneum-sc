@@ -263,6 +263,32 @@ func (c *core) verifySignatures(m qbfttypes.QBFTMessage) error {
 		return nil
 	}
 
+	// DoS hardening: reject oversized justifications BEFORE spending any ecrecover
+	// work on them. A justification can never legitimately contain more payloads than
+	// there are validators, so a longer list is malformed by definition. These are the
+	// same bounds enforced later in isJustified/hasMatchingRoundChangeAndPrepares, moved
+	// ahead of the (unbounded, per-entry) signature loops below so that a single message
+	// carrying tens of thousands of duplicate signed payloads cannot amplify one message
+	// into seconds of ecrecover on every receiving validator's consensus goroutine.
+	// c.valSet can momentarily be nil before the first round is fully set up (see the
+	// nil guards in backlog.go); skip the cap in that window rather than panic. The
+	// downstream isJustified check still bounds the list once valSet is populated.
+	if c.valSet != nil {
+		maxJustification := c.valSet.Size()
+		switch msgType := m.(type) {
+		case *qbfttypes.RoundChange:
+			if len(msgType.Justification) > maxJustification {
+				logger.Warn("IBFT: rejecting round change with oversized justification", "count", len(msgType.Justification), "max", maxJustification)
+				return errInvalidMessage
+			}
+		case *qbfttypes.Preprepare:
+			if len(msgType.JustificationRoundChanges) > maxJustification || len(msgType.JustificationPrepares) > maxJustification {
+				logger.Warn("IBFT: rejecting preprepare with oversized justification", "roundChanges", len(msgType.JustificationRoundChanges), "prepares", len(msgType.JustificationPrepares), "max", maxJustification)
+				return errInvalidMessage
+			}
+		}
+	}
+
 	// Verifies the signature of the message
 	if err := verify(m); err != nil {
 		return err
