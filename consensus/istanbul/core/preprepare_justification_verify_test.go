@@ -6,9 +6,21 @@ import (
 	"testing"
 
 	"github.com/electroneum/electroneum-sc/common"
+	"github.com/electroneum/electroneum-sc/consensus/istanbul"
 	qbfttypes "github.com/electroneum/electroneum-sc/consensus/istanbul/types"
+	"github.com/electroneum/electroneum-sc/consensus/istanbul/validator"
 	"github.com/electroneum/electroneum-sc/log"
 )
+
+// testValSet builds a validator set for verifySignatures tests that need a non-nil
+// c.valSet. The stub validateFn used by these tests does not consult the set, so the
+// concrete membership is irrelevant; only Size() matters (it bounds the justification
+// length cap in verifySignatures).
+func testValSet(n int) istanbul.ValidatorSet {
+	pp := istanbul.NewRoundRobinProposerPolicy()
+	pp.Use(istanbul.ValidatorSortByByte())
+	return validator.NewSet(generateValidators(n), pp)
+}
 
 func TestVerifySignatures_PreprepareRejectsBadJustificationPrepares(t *testing.T) {
 	// Addresses we want validateFn to return on successful "signature validation"
@@ -38,6 +50,7 @@ func TestVerifySignatures_PreprepareRejectsBadJustificationPrepares(t *testing.T
 		// verifySignatures() calls c.currentLogger(), which calls c.logger.New(...)
 		// so logger must be non-nil.
 		logger: log.New(),
+		valSet: testValSet(4),
 	}
 
 	// Build a Preprepare (round > 0 so it can carry justification)
@@ -90,6 +103,7 @@ func TestVerifySignatures_PreprepareAcceptsGoodJustificationPreparesAndSetsSourc
 	c := &core{
 		validateFn: validateFn,
 		logger:     log.New(),
+		valSet:     testValSet(4),
 	}
 
 	block := makeBlock(1)
