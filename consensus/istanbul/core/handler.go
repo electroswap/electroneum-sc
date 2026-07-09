@@ -23,6 +23,7 @@ import (
 	"github.com/electroneum/electroneum-sc/common"
 	"github.com/electroneum/electroneum-sc/consensus/istanbul"
 	qbfttypes "github.com/electroneum/electroneum-sc/consensus/istanbul/types"
+	"github.com/electroneum/electroneum-sc/crypto"
 	"github.com/electroneum/electroneum-sc/log"
 	"github.com/electroneum/electroneum-sc/rlp"
 )
@@ -247,20 +248,62 @@ func (c *core) handleTimeoutMsg() {
 func (c *core) verifySignatures(m qbfttypes.QBFTMessage) error {
 	logger := c.currentLogger(true, m)
 
-	// Anonymous function to verify the signature of a single message or payload
+	// c.valSet is first populated by startNewRound. The handleEvents goroutine is started
+	// before that first call (see Start), so a message can reach verifySignatures during the
+	// brief startup window before any validator set exists. Every downstream signature check
+	// dereferences c.valSet (checkValidatorSignature -> valSet.GetByAddress), so without this
+	// guard that window is a nil-pointer panic. Reject the message instead; it is not for any
+	// round we can validate yet, and a legitimate peer will re-gossip.
+	if c.valSet == nil {
+		logger.Warn("IBFT: dropping message received before validator set is initialised")
+		return errInvalidMessage
+	}
+
+	// Memoize verified (payload, signature) pairs within this message so a justification
+	// containing many identical signed payloads only pays for one ecrecover. This preserves
+	// fail-fast semantics (the first bad signature still errors) while removing the CPU
+	// amplification from duplicate entries.
+	verified := make(map[common.Hash]common.Address)
 	verify := func(m qbfttypes.QBFTMessage) error {
 		payload, err := m.EncodePayloadForSigning()
 		if err != nil {
 			logger.Error("IBFT: invalid message payload", "err", err)
 			return err
 		}
+		key := crypto.Keccak256Hash(payload, m.Signature())
+		if source, ok := verified[key]; ok {
+			m.SetSource(source)
+			return nil
+		}
 		source, err := c.validateFn(payload, m.Signature())
 		if err != nil {
 			logger.Error("IBFT: invalid message signature", "err", err)
 			return errInvalidSigner
 		}
+		verified[key] = source
 		m.SetSource(source)
 		return nil
+	}
+
+	// DoS hardening: reject oversized justifications BEFORE spending any ecrecover
+	// work on them. A justification can never legitimately contain more payloads than
+	// there are validators, so a longer list is malformed by definition. These are the
+	// same bounds enforced later in isJustified/hasMatchingRoundChangeAndPrepares, moved
+	// ahead of the (unbounded, per-entry) signature loops below so that a single message
+	// carrying tens of thousands of duplicate signed payloads cannot amplify one message
+	// into seconds of ecrecover on every receiving validator's consensus goroutine.
+	maxJustification := c.valSet.Size()
+	switch msgType := m.(type) {
+	case *qbfttypes.RoundChange:
+		if len(msgType.Justification) > maxJustification {
+			logger.Warn("IBFT: rejecting round change with oversized justification", "count", len(msgType.Justification), "max", maxJustification)
+			return errInvalidMessage
+		}
+	case *qbfttypes.Preprepare:
+		if len(msgType.JustificationRoundChanges) > maxJustification || len(msgType.JustificationPrepares) > maxJustification {
+			logger.Warn("IBFT: rejecting preprepare with oversized justification", "roundChanges", len(msgType.JustificationRoundChanges), "prepares", len(msgType.JustificationPrepares), "max", maxJustification)
+			return errInvalidMessage
+		}
 	}
 
 	// Verifies the signature of the message
