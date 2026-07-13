@@ -360,6 +360,62 @@ func TestNonWaiverPriorityTxAcceptedWhenNoBaseFee(t *testing.T) {
 	}
 }
 
+// TestExpiredPriorityTxDroppedFromQueue verifies that once a priority key is no
+// longer authorized (expired or removed), a queued transaction signed with that
+// key is fully evicted during promotion instead of being promoted into pending
+// and broadcast. Regression test for a bug where promoteExecutables removed the
+// expired tx only from the global lookup (pool.all) but left it in the per
+// account queued list, so list.Ready still promoted it while pool.Get reported
+// it as unknown, breaking pool invariants.
+func TestExpiredPriorityTxDroppedFromQueue(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupTxPool()
+	defer pool.Stop()
+
+	from := crypto.PubkeyToAddress(key.PublicKey)
+	testAddBalance(pool, from, new(big.Int).Mul(big.NewInt(10), big.NewInt(params.Ether)))
+
+	// Queue a priority tx with a gap in nonce (current nonce is 0, tx nonce is
+	// 1) so it lands in the queue rather than pending.
+	tx := priorityTx(1, 100000, big.NewInt(1), big.NewInt(1), key, priorityPrivateKeys[0])
+	if err := pool.addRemoteSync(tx); err != nil {
+		t.Fatalf("failed to queue priority tx: %v", err)
+	}
+	if pending, queued := pool.Stats(); pending != 0 || queued != 1 {
+		t.Fatalf("unexpected initial pool state: pending=%d queued=%d", pending, queued)
+	}
+
+	// Simulate the priority key expiring/being removed, then advance the account
+	// so the queued tx would otherwise become executable and get promoted.
+	pool.mu.Lock()
+	pool.currentPriorityTransactors = common.PriorityTransactorMap{}
+	pool.currentState.SetNonce(from, 1)
+	pool.pendingNonces.set(from, 1)
+	promoted := pool.promoteExecutables([]common.Address{from})
+	pool.mu.Unlock()
+
+	// The expired tx must not be promoted or broadcast.
+	if len(promoted) != 0 {
+		t.Fatalf("expired priority tx was promoted: got %d promoted", len(promoted))
+	}
+	// It must be gone from the global lookup, the pending set and the queue.
+	if pool.Get(tx.Hash()) != nil {
+		t.Fatalf("expired priority tx still present in lookup")
+	}
+	if pending := pool.PendingPriority(false); len(pending[from]) != 0 {
+		t.Fatalf("expired priority tx returned by PendingPriority: got %d", len(pending[from]))
+	}
+	if pending, queued := pool.Stats(); pending != 0 || queued != 0 {
+		t.Fatalf("expired priority tx not fully evicted: pending=%d queued=%d", pending, queued)
+	}
+	// And all pool bookkeeping (lookup vs pending+queued, gauges, nonces) stays
+	// consistent.
+	if err := validateTxPoolInternals(pool); err != nil {
+		t.Fatalf("pool invariants failed after evicting expired priority tx: %v", err)
+	}
+}
+
 func transaction(nonce uint64, gaslimit uint64, key *ecdsa.PrivateKey) *types.Transaction {
 	return pricedTransaction(nonce, gaslimit, big.NewInt(1), key)
 }
