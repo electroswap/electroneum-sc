@@ -1485,14 +1485,27 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) []*types.Trans
 			continue // Just in case someone calls with a non existing account
 		}
 
-		// kick priority tx that have a key that's expired
+		// kick priority tx whose priority key is no longer authorized (expired
+		// or removed). Collect them first, then route each through removeTx so
+		// the queued list, lookup, gauges and nonces stay consistent. Removing
+		// only from pool.all here would leave the tx in the queued list, where
+		// list.Ready below would still promote it into pending and broadcast it
+		// even though the global lookup no longer knows about it.
+		var expired []common.Hash
 		for _, tx := range list.Flatten() {
 			if tx.Type() == types.PriorityTxType && !pool.locals.containsTx(tx) {
 				priorityPubkey, _ := types.PrioritySender(pool.prioritySigner(), tx) // no need to deal with error because this has already been validated once before
 				if _, ok := pool.currentPriorityTransactors[priorityPubkey]; !ok {
-					pool.all.Remove(tx.Hash())
+					expired = append(expired, tx.Hash())
 				}
 			}
+		}
+		for _, hash := range expired {
+			pool.removeTx(hash, false)
+		}
+		// The queue entry may have been emptied and deleted by removeTx above.
+		if list = pool.queue[addr]; list == nil {
+			continue
 		}
 
 		// Drop all transactions that are deemed too old (low nonce)
