@@ -116,12 +116,28 @@ type testBlockChain struct {
 	chainHeadFeed              *event.Feed
 	priorityType               int
 	priorityTransactorMapCache common.PriorityTransactorMap
+
+	// Optional, for transition tests: when non-nil, the priority transactor set
+	// is resolved by contract address rather than returning the fixed set below.
+	transition *priorityTransitionConfig
+}
+
+// priorityTransitionConfig lets a test model a priority transactor contract
+// address transition, resolving a distinct transactor set per contract address.
+type priorityTransitionConfig struct {
+	chainConfig          *params.ChainConfig
+	transactorsByAddress map[common.Address]common.PriorityTransactorMap
+	headNumber           *big.Int
 }
 
 func (bc *testBlockChain) CurrentBlock() *types.Block {
-	return types.NewBlock(&types.Header{
+	header := &types.Header{
 		GasLimit: atomic.LoadUint64(&bc.gasLimit),
-	}, nil, nil, nil, trie.NewStackTrie(nil))
+	}
+	if bc.transition != nil && bc.transition.headNumber != nil {
+		header.Number = new(big.Int).Set(bc.transition.headNumber)
+	}
+	return types.NewBlock(header, nil, nil, nil, trie.NewStackTrie(nil))
 }
 
 func (bc *testBlockChain) GetBlock(hash common.Hash, number uint64) *types.Block {
@@ -134,6 +150,20 @@ func (bc *testBlockChain) StateAt(common.Hash) (*state.StateDB, error) {
 
 func (bc *testBlockChain) SubscribeChainHeadEvent(ch chan<- ChainHeadEvent) event.Subscription {
 	return bc.chainHeadFeed.Subscribe(ch)
+}
+
+func (bc *testBlockChain) GetPriorityTransactorsForStateAt(header *types.Header, state *state.StateDB, addressBlock *big.Int) common.PriorityTransactorMap {
+	// Lets a test resolve the transactor set per contract address, mirroring the
+	// real transition-aware lookup, instead of the fixed set returned below.
+	if bc.transition != nil {
+		src := bc.transition.transactorsByAddress[bc.transition.chainConfig.GetPriorityTransactorsContractAddress(addressBlock)]
+		dst := make(common.PriorityTransactorMap, len(src))
+		for key, transactor := range src {
+			dst[key] = transactor
+		}
+		return dst
+	}
+	return bc.GetPriorityTransactorsForState(header, state)
 }
 
 func (bc *testBlockChain) GetPriorityTransactorsForState(header *types.Header, state *state.StateDB) common.PriorityTransactorMap {
@@ -234,7 +264,7 @@ func TestWaiverPriorityTxBypassesBaseFee(t *testing.T) {
 	t.Parallel()
 
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{10000000, statedb, new(event.Feed), WaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{10000000, statedb, new(event.Feed), WaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	key, _ := crypto.GenerateKey()
 	pool := NewTxPool(testTxPoolConfig, eip1559Config, blockchain)
@@ -266,7 +296,7 @@ func TestWaiverPriorityTxNonZeroFeeRejected(t *testing.T) {
 	t.Parallel()
 
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{10000000, statedb, new(event.Feed), WaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{10000000, statedb, new(event.Feed), WaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	key, _ := crypto.GenerateKey()
 	pool := NewTxPool(testTxPoolConfig, eip1559Config, blockchain)
@@ -487,7 +517,7 @@ func setupTxPool() (*TxPool, *ecdsa.PrivateKey) {
 
 func setupTxPoolWithConfig(config *params.ChainConfig) (*TxPool, *ecdsa.PrivateKey) {
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{10000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{10000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	key, _ := crypto.GenerateKey()
 	pool := NewTxPool(testTxPoolConfig, config, blockchain)
@@ -599,7 +629,7 @@ func TestStateChangeDuringTransactionPoolReset(t *testing.T) {
 
 	// setup pool with 2 transaction in it
 	statedb.SetBalance(address, new(big.Int).SetUint64(params.Ether))
-	blockchain := &testChain{&testBlockChain{1000000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}}, address, &trigger}
+	blockchain := &testChain{&testBlockChain{1000000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}, nil}, address, &trigger}
 
 	tx0 := transaction(0, 100000, key)
 	tx1 := transaction(1, 100000, key)
@@ -644,7 +674,7 @@ func TestStateChangeDuringPriorityTransactionPoolReset(t *testing.T) {
 
 	// setup pool with 2 transaction in it
 	statedb.SetBalance(address, new(big.Int).SetUint64(params.Ether))
-	blockchain := &testChain{&testBlockChain{1000000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}, address, &trigger}
+	blockchain := &testChain{&testBlockChain{1000000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}, address, &trigger}
 
 	tx0 := priorityTx(0, 100000, big.NewInt(100000), big.NewInt(100000), key, priorityPrivateKeys[0])
 	tx1 := priorityTx(1, 100000, big.NewInt(100000), big.NewInt(100000), key, priorityPrivateKeys[0])
@@ -971,7 +1001,7 @@ func TestTransactionChainFork(t *testing.T) {
 		statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
 		statedb.AddBalance(addr, big.NewInt(100000000000000))
 
-		pool.chain = &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}}
+		pool.chain = &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}, nil}
 		<-pool.requestReset(nil, nil)
 	}
 	resetState()
@@ -1000,7 +1030,7 @@ func TestTransactionDoubleNonce(t *testing.T) {
 		statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
 		statedb.AddBalance(addr, big.NewInt(100000000000000))
 
-		pool.chain = &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}}
+		pool.chain = &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}, nil}
 		<-pool.requestReset(nil, nil)
 	}
 	resetState()
@@ -1051,7 +1081,7 @@ func TestPriorityTransactionDoubleNonce(t *testing.T) {
 		statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
 		statedb.AddBalance(addr, big.NewInt(100000000000000))
 
-		pool.chain = &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+		pool.chain = &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 		<-pool.requestReset(nil, nil)
 	}
 	resetState()
@@ -1412,7 +1442,7 @@ func TestTransactionPostponing(t *testing.T) {
 
 	// Create the pool to test the postponing with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
@@ -1525,7 +1555,7 @@ func TestPriorityTransactionPostponing(t *testing.T) {
 
 	// Create the pool to test the postponing with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
@@ -1828,7 +1858,7 @@ func testTransactionQueueGlobalLimiting(t *testing.T, nolocals bool) {
 
 	// Create the pool to test the limit enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.NoLocals = nolocals
@@ -1918,7 +1948,7 @@ func testPriorityTransactionQueueGlobalLimiting(t *testing.T, nolocals bool) {
 
 	// Create the pool to test the limit enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.NoLocals = nolocals
@@ -2009,7 +2039,7 @@ func testPriorityTransactionQueueGlobalLimitingMixed(t *testing.T, nolocals bool
 
 	// Create the pool to test the limit enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.NoLocals = nolocals
@@ -2132,7 +2162,7 @@ func testTransactionQueueTimeLimiting(t *testing.T, nolocals bool) {
 
 	// Create the pool to test the non-expiration enforcement
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.Lifetime = time.Second
@@ -2289,7 +2319,7 @@ func testPriorityTransactionQueueTimeLimiting(t *testing.T, nolocals bool) {
 
 	// Create the pool to test the non-expiration enforcement
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.Lifetime = time.Second
@@ -2517,7 +2547,7 @@ func TestTransactionPendingGlobalLimiting(t *testing.T) {
 
 	// Create the pool to test the limit enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.GlobalSlots = config.AccountSlots * 10
@@ -2565,7 +2595,7 @@ func TestPriorityTransactionPendingGlobalLimiting(t *testing.T) {
 
 	// Create the pool to test the limit enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.PrioritySlots = config.AccountSlots * 10
@@ -2723,7 +2753,7 @@ func TestTransactionCapClearsFromAll(t *testing.T) {
 
 	// Create the pool to test the limit enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.AccountSlots = 2
@@ -2755,7 +2785,7 @@ func TestPriorityTransactionCapClearsFromAll(t *testing.T) {
 
 	// Create the pool to test the limit enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.AccountSlots = 2
@@ -2789,7 +2819,7 @@ func TestTransactionPendingMinimumAllowance(t *testing.T) {
 
 	// Create the pool to test the limit enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.GlobalSlots = 1
@@ -2835,7 +2865,7 @@ func TestPriorityTransactionPendingMinimumAllowance(t *testing.T) {
 
 	// Create the pool to test the limit enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.PrioritySlots = 1
@@ -2883,7 +2913,7 @@ func TestTransactionPoolRepricing(t *testing.T) {
 
 	// Create the pool to test the pricing enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
@@ -3191,7 +3221,7 @@ func TestTransactionPoolRepricingKeepsLocals(t *testing.T) {
 
 	// Create the pool to test the pricing enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	pool := NewTxPool(testTxPoolConfig, eip1559Config, blockchain)
 	defer pool.Stop()
@@ -3275,7 +3305,7 @@ func TestTransactionPoolUnderpricing(t *testing.T) {
 
 	// Create the pool to test the pricing enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.GlobalSlots = 2
@@ -3381,7 +3411,7 @@ func TestTransactionPoolStableUnderpricing(t *testing.T) {
 
 	// Create the pool to test the pricing enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.GlobalSlots = 128
@@ -3449,7 +3479,7 @@ func TestTransactionPoolUnderpricingDynamicFee(t *testing.T) {
 	t.Parallel()
 
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{10000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{10000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 	pool := NewTxPool(testTxPoolConfig, eip1559Config, blockchain)
 	defer pool.Stop()
 
@@ -3643,7 +3673,7 @@ func TestTransactionDeduplication(t *testing.T) {
 
 	// Create the pool to test the pricing enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NoPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
@@ -3708,7 +3738,7 @@ func TestPriorityTransactionDeduplication(t *testing.T) {
 
 	// Create the pool to test the pricing enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
@@ -3774,7 +3804,7 @@ func TestTransactionReplacement(t *testing.T) {
 
 	// Create the pool to test the pricing enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
@@ -3972,7 +4002,7 @@ func TestPriorityTransactionReplacement(t *testing.T) {
 
 	// Create the pool to test the pricing enforcement with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
@@ -4110,7 +4140,7 @@ func testTransactionJournaling(t *testing.T, nolocals bool) {
 
 	// Create the original pool to inject transaction into the journal
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	config := testTxPoolConfig
 	config.NoLocals = nolocals
@@ -4169,7 +4199,7 @@ func testTransactionJournaling(t *testing.T, nolocals bool) {
 	pool.Stop()
 	statedb.SetNonce(crypto.PubkeyToAddress(local.PublicKey), 1)
 	statedb.SetNonce(crypto.PubkeyToAddress(priorityLocal.PublicKey), 1)
-	blockchain = &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain = &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	pool = NewTxPool(config, params.TestChainConfig, blockchain)
 
@@ -4198,7 +4228,7 @@ func testTransactionJournaling(t *testing.T, nolocals bool) {
 
 	statedb.SetNonce(crypto.PubkeyToAddress(local.PublicKey), 1)
 	statedb.SetNonce(crypto.PubkeyToAddress(priorityLocal.PublicKey), 1)
-	blockchain = &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain = &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 	pool = NewTxPool(config, params.TestChainConfig, blockchain)
 
 	pending, queued = pool.Stats()
@@ -4227,7 +4257,7 @@ func TestTransactionStatusCheck(t *testing.T) {
 
 	// Create the pool to test the status retrievals with
 	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
-	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}}
+	blockchain := &testBlockChain{1000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, nil}
 
 	pool := NewTxPool(testTxPoolConfig, params.TestChainConfig, blockchain)
 	defer pool.Stop()
@@ -4571,5 +4601,66 @@ func BenchmarkPriorityPoolMultiAccountBatchInsert(b *testing.B) {
 	b.ResetTimer()
 	for _, tx := range batches {
 		pool.AddRemotesSync([]*types.Transaction{tx})
+	}
+}
+
+// TestTransactionPriorityTransactorsFollowNextBlockTransition verifies that the
+// pool's priority transactor cache is resolved for the block it is admitting
+// transactions for (head+1) rather than for the head block itself. Previously
+// the cache was loaded for the head while every other fork-sensitive indicator
+// used head+1, so across a PriorityTransactorsContractAddress transition the
+// pool rejected keys authorized for the very next block and kept admitting keys
+// that had just been revoked.
+func TestTransactionPriorityTransactorsFollowNextBlockTransition(t *testing.T) {
+	t.Parallel()
+
+	oldContract := common.HexToAddress("0x1001")
+	newContract := common.HexToAddress("0x2002")
+
+	// The transition to the new contract activates at block 1, so with head 0 the
+	// pool is admitting transactions for the first post-transition block.
+	config := *params.TestChainConfig
+	config.PriorityTransactorsContractAddress = oldContract
+	config.Transitions = []params.Transition{
+		{Block: big.NewInt(1), PriorityTransactorsContractAddress: newContract},
+	}
+
+	oldKey := crypto.ECDSAPubkeyToPublicKey(priorityPrivateKeys[0].PublicKey)
+	newKey := crypto.ECDSAPubkeyToPublicKey(priorityPrivateKeys[1].PublicKey)
+
+	statedb, _ := state.New(common.Hash{}, state.NewDatabase(rawdb.NewMemoryDatabase()), nil)
+	blockchain := &testBlockChain{10000000, statedb, new(event.Feed), NonWaiverPriorityTx, common.PriorityTransactorMap{}, &priorityTransitionConfig{
+		chainConfig: &config,
+		headNumber:  common.Big0,
+		transactorsByAddress: map[common.Address]common.PriorityTransactorMap{
+			oldContract: {oldKey: {EntityName: "revoked-at-next-block", IsGasPriceWaiver: false}},
+			newContract: {newKey: {EntityName: "authorized-at-next-block", IsGasPriceWaiver: false}},
+		},
+	}}
+
+	pool := NewTxPool(testTxPoolConfig, &config, blockchain)
+	defer pool.Stop()
+	<-pool.initDoneCh
+
+	if _, ok := pool.currentPriorityTransactors[newKey]; !ok {
+		t.Error("pool should cache the priority key authorized for the next block")
+	}
+	if _, ok := pool.currentPriorityTransactors[oldKey]; ok {
+		t.Error("pool should not cache the priority key revoked as of the next block")
+	}
+
+	// The newly authorized key must be admissible for the block being built.
+	newSender, _ := crypto.GenerateKey()
+	testAddBalance(pool, crypto.PubkeyToAddress(newSender.PublicKey), big.NewInt(1000000000000))
+	if err := pool.AddRemote(priorityTx(0, 100000, big.NewInt(1), big.NewInt(1), newSender, priorityPrivateKeys[1])); err != nil {
+		t.Errorf("next-block-authorized priority key rejected: %v", err)
+	}
+
+	// The revoked key must no longer be admitted, since execution of the next
+	// block would reject it anyway.
+	oldSender, _ := crypto.GenerateKey()
+	testAddBalance(pool, crypto.PubkeyToAddress(oldSender.PublicKey), big.NewInt(1000000000000))
+	if err := pool.AddRemote(priorityTx(0, 100000, big.NewInt(1), big.NewInt(1), oldSender, priorityPrivateKeys[0])); !errors.Is(err, errBadPriorityKey) {
+		t.Errorf("expected revoked priority key to be rejected with %v, got %v", errBadPriorityKey, err)
 	}
 }

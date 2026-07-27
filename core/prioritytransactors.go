@@ -13,10 +13,21 @@ import (
 
 // GetPriorityTransactors Gets the priority transactor list for the current state using the priority contract address for the block number passed
 func GetPriorityTransactors(evm *vm.EVM) common.PriorityTransactorMap {
+	return GetPriorityTransactorsAt(evm, evm.ChainConfig().GetPriorityTransactorsContractAddress(evm.Context.BlockNumber))
+}
+
+// GetPriorityTransactorsAt is GetPriorityTransactors with an explicitly supplied
+// contract address, letting a caller read the list from a state snapshot while
+// resolving the address for a different (e.g. the next) block number.
+//
+// The txpool needs this because it holds the state of head block N but admits
+// transactions destined for block N+1: it must resolve the transition-aware
+// contract address for N+1 while still executing against N's state. Resolving
+// the address is pure config arithmetic, so this stays free of any synthetic
+// block context that would perturb NUMBER/TIMESTAMP/BLOCKHASH inside the EVM.
+func GetPriorityTransactorsAt(evm *vm.EVM, address common.Address) common.PriorityTransactorMap {
 	var (
 		blockNumber = evm.Context.BlockNumber
-		config      = evm.ChainConfig()
-		address     = config.GetPriorityTransactorsContractAddress(blockNumber)
 		contract    = vm.AccountRef(address)
 		method      = "getTransactors"
 		result      = make(common.PriorityTransactorMap)

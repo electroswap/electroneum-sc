@@ -162,6 +162,7 @@ type blockChain interface {
 	StateAt(root common.Hash) (*state.StateDB, error)
 	SubscribeChainHeadEvent(ch chan<- ChainHeadEvent) event.Subscription
 	GetPriorityTransactorsForState(header *types.Header, state *state.StateDB) common.PriorityTransactorMap
+	GetPriorityTransactorsForStateAt(header *types.Header, state *state.StateDB, addressBlock *big.Int) common.PriorityTransactorMap
 }
 
 // TxPoolConfig are the configuration parameters of the transaction pool.
@@ -1456,7 +1457,13 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	pool.pendingNonces = newTxNoncer(statedb)
 	pool.currentMaxGas = newHead.GasLimit
 
-	pool.currentPriorityTransactors = pool.chain.GetPriorityTransactorsForState(newHead, pool.currentState)
+	// Everything the pool admits is destined for the next block, not the head, so
+	// resolve the priority transactor contract for next as well. The list itself
+	// is still read from the head state (the only state we have); only the
+	// transition-aware contract address follows the next block number, keeping
+	// this cache on the same schedule as the fork indicators set below.
+	next := new(big.Int).Add(newHead.Number, big.NewInt(1))
+	pool.currentPriorityTransactors = pool.chain.GetPriorityTransactorsForStateAt(newHead, pool.currentState, next)
 
 	// Inject any transactions discarded due to reorgs
 	log.Debug("Reinjecting stale transactions", "count", len(reinject))
@@ -1464,7 +1471,6 @@ func (pool *TxPool) reset(oldHead, newHead *types.Header) {
 	pool.addTxsLocked(reinject, false)
 
 	// Update all fork indicator by next pending block number.
-	next := new(big.Int).Add(newHead.Number, big.NewInt(1))
 	pool.istanbul = pool.chainconfig.IsIstanbul(next)
 	pool.eip2718 = pool.chainconfig.IsBerlin(next)
 	pool.eip1559 = pool.chainconfig.IsLondon(next)

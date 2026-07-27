@@ -369,9 +369,19 @@ func (bc *BlockChain) TxLookupLimit() uint64 {
 
 // GetPriorityTransactorsForState receives the priority transactor list appropriate for the current state using the contra
 func (bc *BlockChain) GetPriorityTransactorsForState(header *types.Header, state *state.StateDB) common.PriorityTransactorMap {
+	return bc.GetPriorityTransactorsForStateAt(header, state, header.Number)
+}
+
+// GetPriorityTransactorsForStateAt reads the priority transactor list from the
+// given header's state, but resolves the priority transactor contract address
+// for addressBlock. Pass header.Number for addressBlock to get the plain
+// GetPriorityTransactorsForState behaviour; the txpool passes header.Number+1
+// so that its admission cache follows the same transition schedule as the block
+// it is actually building transactions for.
+func (bc *BlockChain) GetPriorityTransactorsForStateAt(header *types.Header, state *state.StateDB, addressBlock *big.Int) common.PriorityTransactorMap {
 	blockContext := NewEVMBlockContext(header, bc, nil)
 	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, state, bc.chainConfig, bc.vmConfig)
-	return GetPriorityTransactors(vmenv)
+	return GetPriorityTransactorsAt(vmenv, bc.chainConfig.GetPriorityTransactorsContractAddress(addressBlock))
 }
 
 // SubscribeRemovedLogsEvent registers a subscription of RemovedLogsEvent.
