@@ -149,18 +149,19 @@ func (e *Engine) verifyHeader(chain consensus.ChainHeaderReader, header *types.H
 		return consensus.ErrFutureBlock
 	}
 
-	if _, err := types.ExtractQBFTExtra(header); err != nil {
+	extra, err := types.ExtractQBFTExtra(header)
+	if err != nil {
 		return istanbulcommon.ErrInvalidExtraDataFormat
 	}
 
 	// Reject malformed validator votes here, while validating this block, rather
 	// than only later when this header is applied to a voting snapshot. See
-	// verifyVote for why deferring it halts the chain.
+	// validateVote for why deferring it halts the chain.
 	//
 	// Deliberately not fork-gated: this closes a liveness hole that is live on
 	// every current network, and it cannot break historical blocks because the
 	// only writer of this field, WriteVote, emits nothing but 0x00 and 0xff.
-	if err := e.verifyVote(header); err != nil {
+	if err := validateVote(extra.Vote); err != nil {
 		return err
 	}
 
@@ -574,17 +575,27 @@ func WriteVote(candidate common.Address, authorize bool) ApplyQBFTExtra {
 	}
 }
 
-// validateVote checks that a decoded validator vote carries one of the two
-// permitted vote types. A nil vote is valid and means "no vote in this block":
-// Prepare only writes a vote when the node has a pending candidate, so honest
-// headers routinely carry none.
+// validateVote checks that a validator vote carries one of the two permitted
+// vote types, QBFTAuthVote (0xff) or QBFTDropVote (0x00). A nil vote is valid
+// and means "no vote in this block": Prepare only writes a vote when the node
+// has a pending candidate, so honest headers routinely carry none.
 //
 // This is the single source of truth for vote-type validity, shared by the
-// header verification path (verifyVote, run while validating the block itself)
-// and the snapshot path (ReadVote, run when applying an already-accepted
-// header). Both must agree: if verification accepts a vote that snapshot
-// application later rejects, the offending block becomes canonical and then
-// wedges every node that tries to build on it.
+// header verification path (verifyHeader, run while validating the block
+// itself) and the snapshot path (ReadVote, run when applying an already
+// accepted header). Both must agree. Before this was shared, only ReadVote
+// checked the vote, and it runs over headers up to the parent -- never over the
+// block being verified. A malformed vote therefore passed proposal
+// verification, committed-seal finalization and full block import, became the
+// canonical head, and only failed afterwards, when every node needed the voting
+// snapshot over that header to produce or verify the next block. That is a
+// chain halt: nodes could neither build on the head nor verify a successor, and
+// a fresh sync stalled at the same height.
+//
+// The vote is covered by the proposer seal and the committed seals
+// (QBFTFilteredHeaderWithRound strips only CommittedSeal, ProposerSeal and
+// Round from the hash), so validators genuinely sign over this field and
+// rejecting a bad value cannot be used to invalidate an otherwise honest block.
 func validateVote(vote *types.ValidatorVote) error {
 	if vote == nil {
 		return nil
@@ -593,30 +604,6 @@ func validateVote(vote *types.ValidatorVote) error {
 		return istanbulcommon.ErrInvalidVote
 	}
 	return nil
-}
-
-// verifyVote rejects a header whose QBFT extra-data carries a vote with a type
-// other than QBFTAuthVote (0xff) or QBFTDropVote (0x00).
-//
-// Without this check the vote is only ever validated on the way *out*, in
-// ReadVote during snapshot application, which runs over headers up to the
-// parent -- never over the block being verified. A malformed vote therefore
-// passed proposal verification, committed-seal finalization and full block
-// import, became the canonical head, and only failed afterwards, when every
-// node needed the voting snapshot over that header to produce or verify the
-// next block. That is a chain halt: nodes could neither build on the head nor
-// verify a successor, and a fresh sync stalled at the same height.
-//
-// The vote is covered by the proposer seal and the committed seals
-// (QBFTFilteredHeaderWithRound strips only CommittedSeal, ProposerSeal and
-// Round from the hash), so validators genuinely sign over this field and
-// rejecting a bad value cannot be used to invalidate an otherwise honest block.
-func (e *Engine) verifyVote(header *types.Header) error {
-	qbftExtra, err := types.ExtractQBFTExtra(header)
-	if err != nil {
-		return istanbulcommon.ErrInvalidExtraDataFormat
-	}
-	return validateVote(qbftExtra.Vote)
 }
 
 func (e *Engine) ReadVote(header *types.Header) (candidate common.Address, authorize bool, err error) {
