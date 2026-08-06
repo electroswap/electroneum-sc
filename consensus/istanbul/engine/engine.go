@@ -247,6 +247,20 @@ func (e *Engine) verifyCascadingFields(chain consensus.ChainHeaderReader, header
 		return fmt.Errorf("invalid gasLimit: have %v, max %v", header.GasLimit, params.MaxGasLimit)
 	}
 
+	// A block cannot consume more gas than its own limit. core.ApplyTransaction
+	// meters execution against a GasPool seeded from header.GasLimit, so any
+	// header claiming more than that describes an execution that cannot have
+	// happened. Import already rejects it in ValidateState, but only after the
+	// block has been executed; QBFT calls this during proposal verification,
+	// before honest validators sign PREPARE/COMMIT, so checking here closes the
+	// gap between the pre-vote gate and the import gate.
+	//
+	// Deliberately not fork-gated: no header that ever executed can fail this,
+	// so it cannot invalidate historical blocks.
+	if header.GasUsed > header.GasLimit {
+		return fmt.Errorf("invalid gasUsed: have %d, gasLimit %d", header.GasUsed, header.GasLimit)
+	}
+
 	// Verify EIP-1559 header fields (BaseFee correctness, BaseFee presence,
 	// and the per-block ±1/1024 GasLimit bound via misc.VerifyGaslimit).
 	// Without this, a malicious proposer can ship blocks with an arbitrary
