@@ -283,7 +283,11 @@ func (rcs *roundChangeSet) Add(r *big.Int, msg qbfttypes.QBFTMessage, preparedRo
 
 	if preparedRound != nil && (rcs.highestPreparedRound[round] == nil || preparedRound.Cmp(rcs.highestPreparedRound[round]) > 0) {
 		roundChange := msg.(*qbfttypes.RoundChange)
-		if hasMatchingRoundChangeAndPrepares(roundChange, prepareMessages, quorumSize, roundChange.HasBadProposal, rcs.validatorSet) == nil {
+		// A single ROUND-CHANGE cannot assert its own bad-proposal exemption: HasBadProposal must be
+		// corroborated by a quorum of distinct signers, which is only ever established in isJustified
+		// at read time. Passing that per-message flag here would let one Byzantine validator skip the
+		// digest binding and pin highestPreparedBlock to a block of its choosing, stalling the round.
+		if hasMatchingRoundChangeAndPrepares(roundChange, prepareMessages, quorumSize, false, rcs.validatorSet) == nil {
 			rcs.highestPreparedRound[round] = preparedRound
 			rcs.highestPreparedBlock[round] = preparedBlock
 			rcs.prepareMessages[round] = prepareMessages
