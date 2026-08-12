@@ -636,8 +636,24 @@ func (sb *Backend) snapApplyHeader(snap *Snapshot, header *types.Header) error {
 
 	logger.Trace("IBFT: apply header to voting snapshot")
 
-	// Remove any votes on checkpoint blocks
 	number := header.Number.Uint64()
+
+	// Post-FutureFork: refresh the active epoch length from the chain config for
+	// this header's block number before deciding checkpoint vote-resets. snap.Epoch
+	// is only seeded at genesis/load and copied forward, so on its own it never
+	// reflects an EpochLength transition -- leaving votes cast before the transition
+	// live past the first checkpoint of the new epoch schedule. Re-syncing snap.Epoch
+	// keeps later readers consistent.
+	//
+	// Gated on IsFutureFork so pre-fork history replays byte-identically on existing
+	// nodes (the shipped configs set FutureForkBlock to MaxInt64, so this is a no-op
+	// until a fork block is scheduled). A nil chain (unit tests without a chain
+	// reader) keeps the legacy path, mirroring the proposer-seal gate in the engine.
+	if sb.chain != nil && sb.chain.Config().IsFutureFork(header.Number) {
+		snap.Epoch = sb.config.GetConfig(header.Number).Epoch
+	}
+
+	// Remove any votes on checkpoint blocks
 	if number%snap.Epoch == 0 {
 		snap.Votes = nil
 		snap.Tally = make(map[common.Address]Tally)
