@@ -94,6 +94,16 @@ func isJustified(
 				return errors.New("prepared message has nil round")
 			}
 
+			// Sequence binding: a justification PREPARE must belong to the same sequence as the
+			// PRE-PREPARE it justifies. A PREPARE's signature covers its own Sequence, so a
+			// genuine PREPARE from an already-finalised past sequence verifies correctly; without
+			// this check its (matching) digest and round let it stand in as justification for a
+			// block in the current sequence. Bind it here so replayed cross-sequence PREPAREs
+			// cannot poison the prepared block.
+			if p.Sequence == nil || p.Sequence.Cmp(sequence) != 0 {
+				return errors.New("prepared message sequence does not match target sequence")
+			}
+
 			// Must be same round and match proposal digest (unless bad-proposal quorum)
 			if preparedRound.Cmp(p.Round) != 0 || (proposal.Hash() != p.Digest && !hasBadProposal) {
 				return errors.New("prepared messages do not have same round or do not match proposal")
@@ -222,6 +232,15 @@ func hasMatchingRoundChangeAndPrepares(
 	for _, p := range prepareMessages {
 		if p == nil {
 			return errors.New("prepare message is nil")
+		}
+
+		// Sequence binding: a justification PREPARE must belong to the same sequence as the
+		// ROUND-CHANGE it justifies. A PREPARE's signature covers its own Sequence, so a genuine
+		// PREPARE replayed from an already-finalised past sequence verifies correctly; without this
+		// check its matching digest and round let it stand in as justification, poisoning
+		// highestPreparedBlock with a stale block. Bind it to the ROUND-CHANGE's sequence here.
+		if p.Sequence == nil || roundChange.Sequence == nil || p.Sequence.Cmp(roundChange.Sequence) != 0 {
+			return errors.New("prepared message sequence does not match roundchange sequence")
 		}
 
 		// Must match digest (unless bad-proposal quorum)
