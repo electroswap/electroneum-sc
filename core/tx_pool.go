@@ -1855,14 +1855,28 @@ func (pool *TxPool) demoteUnexecutables() {
 
 		// kick was-priority transactions that don't abide by the new state because the odds of such a tx becoming valid
 		// again (priority reestablished in the next few hours) is pretty much zero and we dont want to waste resources
-		// populating the queue unnecessarily and waste an account slot that could be used for another priority sender
+		// populating the queue unnecessarily and waste an account slot that could be used for another priority sender.
+		// Collect them first, then route each through removeTx so the pending list,
+		// lookup, gauges and nonces stay consistent. Removing only from pool.all
+		// here would strand the tx in the pending list, where PendingPriority
+		// would keep offering it to the miner while no eviction path could ever
+		// reclaim it (removeTx no-ops once the lookup entry is gone and
+		// truncatePending skips priority lists).
+		var expired []common.Hash
 		for _, tx := range list.Flatten() {
 			if tx.Type() == types.PriorityTxType && !pool.locals.containsTx(tx) {
 				priorityPubkey, _ := types.PrioritySender(pool.prioritySigner(), tx) // no need to deal with error because this has already been validated once before
 				if _, ok := pool.currentPriorityTransactors[priorityPubkey]; !ok {
-					pool.all.Remove(tx.Hash())
+					expired = append(expired, tx.Hash())
 				}
 			}
+		}
+		for _, hash := range expired {
+			pool.removeTx(hash, false)
+		}
+		// The pending entry may have been emptied and deleted by removeTx above.
+		if list = pool.pending[addr]; list == nil {
+			continue
 		}
 
 		// Drop all transactions that are deemed too old (low nonce)
