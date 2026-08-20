@@ -286,7 +286,7 @@ func TestAddToBacklog_AcceptsValidFutureMessage(t *testing.T) {
 	src := valSet.List()[1].Address()
 	msg := makePrepare(11, 0, src) // future sequence
 
-	c.addToBacklog(msg)
+	c.addToBacklog(msg, 1024)
 
 	c.backlogsMu.Lock()
 	defer c.backlogsMu.Unlock()
@@ -303,7 +303,7 @@ func TestAddToBacklog_RejectsMessageFromSelf(t *testing.T) {
 
 	msg := makePrepare(11, 0, c.Address()) // from self
 
-	c.addToBacklog(msg)
+	c.addToBacklog(msg, 1024)
 
 	c.backlogsMu.Lock()
 	defer c.backlogsMu.Unlock()
@@ -323,7 +323,7 @@ func TestAddToBacklog_RejectsNonValidator(t *testing.T) {
 	outsider := crypto.PubkeyToAddress(outsiderKey.PublicKey)
 	msg := makePrepare(11, 0, outsider)
 
-	c.addToBacklog(msg)
+	c.addToBacklog(msg, 1024)
 
 	c.backlogsMu.Lock()
 	defer c.backlogsMu.Unlock()
@@ -343,7 +343,7 @@ func TestAddToBacklog_RejectsFarFutureMessage(t *testing.T) {
 	// Sequence 100 is far beyond MaxFutureSequenceGap (32) from current seq 10
 	msg := makePrepare(100, 0, src)
 
-	c.addToBacklog(msg)
+	c.addToBacklog(msg, 1024)
 
 	c.backlogsMu.Lock()
 	defer c.backlogsMu.Unlock()
@@ -364,7 +364,7 @@ func TestAddToBacklog_EnforcesPerValidatorCap(t *testing.T) {
 	// Fill to capacity
 	for i := 0; i < MaxBacklogPerValidator; i++ {
 		msg := makePrepare(11, int64(i), src)
-		c.addToBacklog(msg)
+		c.addToBacklog(msg, 1024)
 	}
 
 	c.backlogsMu.Lock()
@@ -378,7 +378,7 @@ func TestAddToBacklog_EnforcesPerValidatorCap(t *testing.T) {
 
 	// One more should be rejected
 	overflow := makePrepare(11, int64(MaxBacklogPerValidator), src)
-	c.addToBacklog(overflow)
+	c.addToBacklog(overflow, 1024)
 
 	c.backlogsMu.Lock()
 	defer c.backlogsMu.Unlock()
@@ -408,7 +408,7 @@ func TestAddToBacklog_EnforcesGlobalCap(t *testing.T) {
 				continue // skip self
 			}
 			msg := makePrepare(11, int64(added), v.Address())
-			c.addToBacklog(msg)
+			c.addToBacklog(msg, 1024)
 			added++
 			if added >= maxTotal {
 				break
@@ -432,7 +432,7 @@ func TestAddToBacklog_EnforcesGlobalCap(t *testing.T) {
 		src = validators[2].Address()
 	}
 	overflow := makePrepare(11, int64(maxTotal+1), src)
-	c.addToBacklog(overflow)
+	c.addToBacklog(overflow, 1024)
 
 	c.backlogsMu.Lock()
 	defer c.backlogsMu.Unlock()
@@ -453,7 +453,7 @@ func TestAddToBacklog_RejectsExcessiveRoundChangeRound(t *testing.T) {
 	// Same sequence, but round far exceeds MaxFutureRoundGap
 	msg := makeRoundChange(10, 100, src)
 
-	c.addToBacklog(msg)
+	c.addToBacklog(msg, 1024)
 
 	c.backlogsMu.Lock()
 	defer c.backlogsMu.Unlock()

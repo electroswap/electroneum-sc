@@ -38,21 +38,47 @@ const (
 	MaxFutureRoundGap uint64 = 15
 
 	// === Memory Protection Limits ===
+	//
+	// NOTE: the message-count caps below are a coarse first line of defence. They
+	// do NOT by themselves bound retained memory, because a single PRE-PREPARE
+	// carries a full decoded block proposal that can be far larger than the ~1KB a
+	// count cap implicitly assumes. The per-message ceiling below bounds the worst
+	// single message; the aggregate byte budget is a separate follow-up.
 
-	// Per-validator cap: 1024 messages ≈ 1MB per spoofed validator address.
-	// Generous enough for legitimate traffic bursts.
+	// Per-validator message count cap. Generous enough for legitimate traffic
+	// bursts.
 	MaxBacklogPerValidator = 1024
 
-	// MinBacklogTotal: floor for small validator sets.
+	// MinBacklogTotal: floor on the message count for small validator sets.
 	// Ensures small networks (e.g., 4 validators) still have reasonable capacity.
-	// 4096 messages ≈ 4MB minimum.
 	MinBacklogTotal = 4096
 
-	// MaxBacklogTotalCeiling: hard ceiling regardless of validator count.
-	// Prevents memory exhaustion in very large networks.
-	// 131072 messages ≈ 128MB maximum.
+	// MaxBacklogTotalCeiling: hard ceiling on message count regardless of
+	// validator count. Prevents entry-count blowup in very large networks.
 	MaxBacklogTotalCeiling = 131072
+
+	// MaxFuturePreprepareBytes bounds the encoded wire size of a single future
+	// PRE-PREPARE we are willing to retain in the backlog.
+	//
+	// A legitimate block is bounded by gas, not by the 10 MiB transport frame
+	// (eth/handler.go protocolMaxMsgSize). At a 30,000,000 gas limit and 16 gas
+	// per non-zero calldata byte, the largest data-carrying block is ~1.9 MiB, and
+	// real blocks are far smaller. 4 MiB leaves ~2x headroom over that hard bound
+	// (covering RLP framing and PRE-PREPARE justification arrays) while rejecting
+	// the near-10-MiB proposals that make the count-only cap a DoS vector.
+	//
+	// If the network gas limit is raised substantially, revisit this constant so
+	// legitimate large blocks are not rejected (which would be a liveness bug).
+	MaxFuturePreprepareBytes = 4 * 1024 * 1024
 )
+
+// backlogEntry is a backlogged message together with its encoded wire size, so
+// that byte-budget accounting stays exact across push, pop, requeue and
+// whole-backlog eviction without re-encoding the message.
+type backlogEntry struct {
+	msg  qbfttypes.QBFTMessage
+	size int
+}
 
 var (
 	// msgPriority is defined for calculating processing priority to speedup consensus
@@ -177,8 +203,9 @@ func (c *core) withinBacklogFutureWindow(msgCode uint64, view istanbul.View) boo
 }
 
 // addToBacklog stores a future message for later processing, subject to
-// validator verification, future window limits, and capacity caps.
-func (c *core) addToBacklog(msg qbfttypes.QBFTMessage) {
+// validator verification, future window limits, and capacity caps. encodedSize
+// is the message's encoded wire size, used to enforce the backlog byte budgets.
+func (c *core) addToBacklog(msg qbfttypes.QBFTMessage, encodedSize int) {
 	logger := c.currentLogger(true, msg)
 
 	src := msg.Source()
@@ -206,10 +233,22 @@ func (c *core) addToBacklog(msg qbfttypes.QBFTMessage) {
 		return
 	}
 
+	// Reject any single future PRE-PREPARE whose encoded size exceeds the
+	// per-message ceiling before it is retained. A legitimate proposal is bounded
+	// by gas well below this; anything larger is either malformed or an attempt to
+	// pin large proposals in the backlog, and the proposal is not validated until
+	// the message becomes current, so we must bound it here.
+	if msg.Code() == qbfttypes.PreprepareCode && encodedSize > MaxFuturePreprepareBytes {
+		logger.Warn("IBFT: dropping oversized future PRE-PREPARE",
+			"src", src, "size", encodedSize, "cap", MaxFuturePreprepareBytes,
+		)
+		return
+	}
+
 	c.backlogsMu.Lock()
 	defer c.backlogsMu.Unlock()
 
-	// Global cap (dynamic based on validator count)
+	// Global count cap (dynamic based on validator count)
 	maxTotal := c.maxBacklogTotal()
 	if c.backlogsTotal >= maxTotal {
 		logger.Trace("IBFT: dropping backlog message (global cap reached)",
@@ -224,7 +263,7 @@ func (c *core) addToBacklog(msg qbfttypes.QBFTMessage) {
 		c.backlogs[src] = backlog
 	}
 
-	// Per-validator cap
+	// Per-validator count cap
 	if backlog.Size() >= MaxBacklogPerValidator {
 		logger.Trace("IBFT: dropping backlog message (per-validator cap reached)",
 			"src", src, "cap", MaxBacklogPerValidator, "size", backlog.Size(),
@@ -232,7 +271,7 @@ func (c *core) addToBacklog(msg qbfttypes.QBFTMessage) {
 		return
 	}
 
-	backlog.Push(msg, toPriority(msg.Code(), &view))
+	backlog.Push(&backlogEntry{msg: msg, size: encodedSize}, toPriority(msg.Code(), &view))
 	c.backlogsTotal++
 
 	logger.Trace("IBFT: new backlog message", "backlogs_total", c.backlogsTotal, "src_backlog_size", backlog.Size())
@@ -266,9 +305,10 @@ func (c *core) processBacklog() {
 		//  2) the next message is still a future message (we requeue it and stop)
 		for !backlog.Empty() {
 			m, prio := backlog.Pop()
+			entry := m.(*backlogEntry)
 			c.backlogsTotal--
 
-			msg := m.(qbfttypes.QBFTMessage)
+			msg := entry.msg
 			code := msg.Code()
 			view := msg.View()
 
@@ -277,29 +317,30 @@ func (c *core) processBacklog() {
 			if err != nil {
 				// Use errors.Is to be robust to wrapped errors.
 				if errors.Is(err, errFutureMessage) {
-					logger.Trace("IBFT: stop processing backlog", "msg", m)
+					logger.Trace("IBFT: stop processing backlog", "msg", msg)
 
 					// Requeue only if it still fits our window/caps (defensive).
 					if c.withinBacklogFutureWindow(code, view) &&
 						backlog.Size() < MaxBacklogPerValidator &&
 						c.backlogsTotal < c.maxBacklogTotal() {
-						backlog.Push(m, prio)
+						backlog.Push(entry, prio)
 						c.backlogsTotal++
 					}
 					break
 				}
 
 				// Old/invalid messages are dropped permanently.
-				logger.Trace("IBFT: skip backlog message", "msg", m, "err", err)
+				logger.Trace("IBFT: skip backlog message", "msg", msg, "err", err)
 				continue
 			}
 
-			logger.Trace("IBFT: post backlog event", "msg", m)
+			logger.Trace("IBFT: post backlog event", "msg", msg)
 
 			// Post backlog event for main handler loop
 			event := backlogEvent{
-				src: src,
-				msg: msg,
+				src:  src,
+				msg:  msg,
+				size: entry.size,
 			}
 			go c.sendEvent(event)
 		}
