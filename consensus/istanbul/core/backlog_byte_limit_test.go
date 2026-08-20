@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/electroneum/electroneum-sc/common"
+	"github.com/electroneum/electroneum-sc/consensus/istanbul"
 	qbfttypes "github.com/electroneum/electroneum-sc/consensus/istanbul/types"
 	"github.com/electroneum/electroneum-sc/core/types"
 )
@@ -52,5 +53,80 @@ func TestAddToBacklog_AcceptsRealisticFuturePreprepare(t *testing.T) {
 
 	if c.backlogsTotal != 1 {
 		t.Fatalf("realistic future PRE-PREPARE not retained: backlogsTotal=%d, want 1", c.backlogsTotal)
+	}
+	if c.backlogsBytes[src] != realistic {
+		t.Fatalf("byte charge = %d, want %d", c.backlogsBytes[src], realistic)
+	}
+}
+
+// TestAddToBacklog_PerValidatorByteBudget proves that a single source cannot
+// exceed MaxBacklogBytesPerValidator even while under the message-count cap.
+// This is the core regression: the old code bounded count only, so 1024 large
+// messages could retain multi-GB. Here the byte budget stops admission long
+// before the count cap is reached.
+func TestAddToBacklog_PerValidatorByteBudget(t *testing.T) {
+	valSet := newTestValidatorSet(4)
+	c := newTestCore(valSet, 1, 0)
+	src := valSet.List()[1].Address()
+
+	const per = 1024 * 1024 // 1 MiB each
+	admitted := 0
+	for i := 0; i < MaxBacklogBytesPerValidator/per+16; i++ {
+		before := c.backlogsTotal
+		// Distinct future sequence per message so none collapse.
+		pp := makeFuturePreprepare(int64(2+i), 0, src, per)
+		c.addToBacklog(pp, per)
+		if c.backlogsTotal > before {
+			admitted++
+		}
+	}
+
+	if c.backlogsBytes[src] > MaxBacklogBytesPerValidator {
+		t.Fatalf("per-validator bytes %d exceeded budget %d", c.backlogsBytes[src], MaxBacklogBytesPerValidator)
+	}
+	if admitted >= MaxBacklogPerValidator {
+		t.Fatalf("byte budget did not bite before the count cap: admitted %d", admitted)
+	}
+	wantApprox := MaxBacklogBytesPerValidator / per
+	if admitted != wantApprox {
+		t.Fatalf("admitted %d messages, want %d (budget %d / per %d)", admitted, wantApprox, MaxBacklogBytesPerValidator, per)
+	}
+}
+
+// TestProcessBacklog_ByteAccountingIsExact proves the byte counters return to
+// zero once a full backlog is drained by chain progress. This guards against the
+// accounting-drift and underflow traps in pop / requeue / whole-backlog eviction.
+func TestProcessBacklog_ByteAccountingIsExact(t *testing.T) {
+	valSet := newTestValidatorSet(4)
+	c := newTestCore(valSet, 1, 0)
+	src := valSet.List()[1].Address()
+
+	const per = 512 * 1024
+	const n = 8
+	for i := 0; i < n; i++ {
+		pp := makeFuturePreprepare(int64(2+i), 0, src, per)
+		c.addToBacklog(pp, per)
+	}
+	if c.backlogsBytesTotal != n*per {
+		t.Fatalf("after admission backlogsBytesTotal=%d, want %d", c.backlogsBytesTotal, n*per)
+	}
+
+	// Advance current view past all backlogged sequences so processBacklog drains
+	// them all (they are no longer future and become deliverable, so they are
+	// popped and posted rather than requeued).
+	c.current = newRoundState(
+		&istanbul.View{Sequence: big.NewInt(100), Round: big.NewInt(0)},
+		valSet, nil, nil, nil, nil, func(common.Hash) bool { return false },
+	)
+	c.processBacklog()
+
+	if c.backlogsBytesTotal != 0 {
+		t.Fatalf("after drain backlogsBytesTotal=%d, want 0 (accounting drift)", c.backlogsBytesTotal)
+	}
+	if c.backlogsTotal != 0 {
+		t.Fatalf("after drain backlogsTotal=%d, want 0", c.backlogsTotal)
+	}
+	if b := c.backlogsBytes[src]; b != 0 {
+		t.Fatalf("after drain per-source bytes=%d, want 0", b)
 	}
 }

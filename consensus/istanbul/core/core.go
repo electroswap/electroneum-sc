@@ -49,6 +49,7 @@ func New(backend istanbul.Backend, config *istanbul.Config) istanbul.Core {
 		cleanLogger:        log.New(),
 		backend:            backend,
 		backlogs:           make(map[common.Address]*prque.Prque),
+		backlogsBytes:      make(map[common.Address]int),
 		backlogsMu:         new(sync.Mutex),
 		pendingRequests:    prque.New(nil),
 		pendingRequestsMu:  new(sync.Mutex),
@@ -81,6 +82,11 @@ type core struct {
 	backlogs      map[common.Address]*prque.Prque
 	backlogsMu    *sync.Mutex
 	backlogsTotal int
+	// backlogsBytes tracks retained encoded bytes per source and in aggregate, so
+	// that future-message admission can enforce a byte budget in addition to the
+	// message-count caps. Kept in lockstep with backlogs under backlogsMu.
+	backlogsBytes      map[common.Address]int
+	backlogsBytesTotal int
 
 	current      *roundState
 	currentMutex *sync.Mutex

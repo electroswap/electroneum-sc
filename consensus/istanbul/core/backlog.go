@@ -43,7 +43,7 @@ const (
 	// do NOT by themselves bound retained memory, because a single PRE-PREPARE
 	// carries a full decoded block proposal that can be far larger than the ~1KB a
 	// count cap implicitly assumes. The per-message ceiling below bounds the worst
-	// single message; the aggregate byte budget is a separate follow-up.
+	// single message; the byte budgets bound aggregate retained memory.
 
 	// Per-validator message count cap. Generous enough for legitimate traffic
 	// bursts.
@@ -70,6 +70,22 @@ const (
 	// If the network gas limit is raised substantially, revisit this constant so
 	// legitimate large blocks are not rejected (which would be a liveness bug).
 	MaxFuturePreprepareBytes = 4 * 1024 * 1024
+
+	// MaxBacklogBytesPerValidator bounds the total encoded bytes retained for a
+	// single source. This, not the message-count cap, is what actually bounds
+	// per-sender memory once individual messages can be large. At ~1.9 MiB per
+	// realistic max block this still holds ~16 real future proposals per sender,
+	// while capping a Byzantine sender far below the multi-GB the count cap alone
+	// would permit.
+	MaxBacklogBytesPerValidator = 32 * 1024 * 1024
+
+	// MinBacklogBytesTotal: floor on the global byte budget for small validator
+	// sets, mirroring MinBacklogTotal for counts.
+	MinBacklogBytesTotal = 128 * 1024 * 1024
+
+	// MaxBacklogBytesTotalCeiling: hard ceiling on total retained backlog bytes
+	// regardless of validator count, kept comfortably below any validator's RAM.
+	MaxBacklogBytesTotalCeiling = 512 * 1024 * 1024
 )
 
 // backlogEntry is a backlogged message together with its encoded wire size, so
@@ -248,11 +264,25 @@ func (c *core) addToBacklog(msg qbfttypes.QBFTMessage, encodedSize int) {
 	c.backlogsMu.Lock()
 	defer c.backlogsMu.Unlock()
 
+	if c.backlogsBytes == nil {
+		c.backlogsBytes = make(map[common.Address]int)
+	}
+
 	// Global count cap (dynamic based on validator count)
 	maxTotal := c.maxBacklogTotal()
 	if c.backlogsTotal >= maxTotal {
 		logger.Trace("IBFT: dropping backlog message (global cap reached)",
 			"cap", maxTotal, "total", c.backlogsTotal,
+		)
+		return
+	}
+
+	// Global byte budget. This, not the count cap, bounds aggregate retained
+	// memory once individual messages can be large.
+	maxBytesTotal := c.maxBacklogBytesTotal()
+	if c.backlogsBytesTotal+encodedSize > maxBytesTotal {
+		logger.Trace("IBFT: dropping backlog message (global byte budget reached)",
+			"cap", maxBytesTotal, "total", c.backlogsBytesTotal, "size", encodedSize,
 		)
 		return
 	}
@@ -271,10 +301,23 @@ func (c *core) addToBacklog(msg qbfttypes.QBFTMessage, encodedSize int) {
 		return
 	}
 
+	// Per-validator byte budget
+	if c.backlogsBytes[src]+encodedSize > MaxBacklogBytesPerValidator {
+		logger.Trace("IBFT: dropping backlog message (per-validator byte budget reached)",
+			"src", src, "cap", MaxBacklogBytesPerValidator, "bytes", c.backlogsBytes[src], "size", encodedSize,
+		)
+		return
+	}
+
 	backlog.Push(&backlogEntry{msg: msg, size: encodedSize}, toPriority(msg.Code(), &view))
 	c.backlogsTotal++
+	c.backlogsBytes[src] += encodedSize
+	c.backlogsBytesTotal += encodedSize
 
-	logger.Trace("IBFT: new backlog message", "backlogs_total", c.backlogsTotal, "src_backlog_size", backlog.Size())
+	logger.Trace("IBFT: new backlog message",
+		"backlogs_total", c.backlogsTotal, "src_backlog_size", backlog.Size(),
+		"backlogs_bytes_total", c.backlogsBytesTotal, "src_backlog_bytes", c.backlogsBytes[src],
+	)
 }
 
 // processBacklog looks up future messages that have been backlogged and posts them on
@@ -293,6 +336,8 @@ func (c *core) processBacklog() {
 		_, src := c.valSet.GetByAddress(srcAddress)
 		if src == nil {
 			c.backlogsTotal -= backlog.Size()
+			c.backlogsBytesTotal -= c.backlogsBytes[srcAddress]
+			delete(c.backlogsBytes, srcAddress)
 			delete(c.backlogs, srcAddress)
 			continue
 		}
@@ -307,6 +352,8 @@ func (c *core) processBacklog() {
 			m, prio := backlog.Pop()
 			entry := m.(*backlogEntry)
 			c.backlogsTotal--
+			c.backlogsBytesTotal -= entry.size
+			c.backlogsBytes[srcAddress] -= entry.size
 
 			msg := entry.msg
 			code := msg.Code()
@@ -322,9 +369,13 @@ func (c *core) processBacklog() {
 					// Requeue only if it still fits our window/caps (defensive).
 					if c.withinBacklogFutureWindow(code, view) &&
 						backlog.Size() < MaxBacklogPerValidator &&
-						c.backlogsTotal < c.maxBacklogTotal() {
+						c.backlogsTotal < c.maxBacklogTotal() &&
+						c.backlogsBytesTotal+entry.size <= c.maxBacklogBytesTotal() &&
+						c.backlogsBytes[srcAddress]+entry.size <= MaxBacklogBytesPerValidator {
 						backlog.Push(entry, prio)
 						c.backlogsTotal++
+						c.backlogsBytesTotal += entry.size
+						c.backlogsBytes[srcAddress] += entry.size
 					}
 					break
 				}
@@ -348,6 +399,7 @@ func (c *core) processBacklog() {
 		// Clean up empty queues
 		if backlog.Empty() {
 			delete(c.backlogs, srcAddress)
+			delete(c.backlogsBytes, srcAddress)
 		}
 	}
 }
@@ -367,6 +419,26 @@ func (c *core) maxBacklogTotal() int {
 	}
 	if dynamic > MaxBacklogTotalCeiling {
 		return MaxBacklogTotalCeiling
+	}
+	return dynamic
+}
+
+// maxBacklogBytesTotal returns the dynamic global byte budget based on validator
+// count, mirroring maxBacklogTotal for bytes. This is the limit that actually
+// bounds aggregate retained memory once individual messages can be large.
+func (c *core) maxBacklogBytesTotal() int {
+	if c.valSet == nil {
+		return MinBacklogBytesTotal
+	}
+
+	// Allow 2x headroom so validators can burst while others are quiet.
+	dynamic := c.valSet.Size() * MaxBacklogBytesPerValidator * 2
+
+	if dynamic < MinBacklogBytesTotal {
+		return MinBacklogBytesTotal
+	}
+	if dynamic > MaxBacklogBytesTotalCeiling {
+		return MaxBacklogBytesTotalCeiling
 	}
 	return dynamic
 }
