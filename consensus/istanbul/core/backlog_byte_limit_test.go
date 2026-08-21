@@ -8,7 +8,41 @@ import (
 	"github.com/electroneum/electroneum-sc/consensus/istanbul"
 	qbfttypes "github.com/electroneum/electroneum-sc/consensus/istanbul/types"
 	"github.com/electroneum/electroneum-sc/core/types"
+	"github.com/electroneum/electroneum-sc/params"
 )
+
+// assumedNetworkGasLimit is the block gas limit MaxFuturePreprepareBytes was
+// sized against (see genesis GasLimit, currently 30,000,000). It is duplicated
+// here deliberately so that TestMaxFuturePreprepareBytes_CoversMaxBlock fails
+// loudly if the ceiling and the gas-limit assumption ever drift apart — that is
+// the review trigger to revisit the ceiling, not a value read at runtime.
+const assumedNetworkGasLimit = 30_000_000
+
+// TestMaxFuturePreprepareBytes_CoversMaxBlock pins the per-message ceiling to the
+// gas-limit assumption it was derived from. The largest data-carrying block is
+// bounded by gas: assumedNetworkGasLimit / TxDataNonZeroGasEIP2028 bytes of
+// calldata. The ceiling must sit above that hard bound with margin, otherwise a
+// legitimate near-max block would be rejected from the backlog (a liveness bug).
+//
+// If someone raises the assumed gas limit (e.g. as part of a network upgrade)
+// without raising MaxFuturePreprepareBytes, this test goes red — forcing the two
+// to be reconciled rather than silently drifting into a liveness regression.
+func TestMaxFuturePreprepareBytes_CoversMaxBlock(t *testing.T) {
+	// Hard upper bound on legitimate block payload: every gas unit spent on the
+	// cheapest data (non-zero calldata post-EIP-2028) buys 1/16 of a byte.
+	maxBlockBytes := assumedNetworkGasLimit / int(params.TxDataNonZeroGasEIP2028)
+
+	// Require at least ~2x headroom over the hard bound to cover RLP framing,
+	// PRE-PREPARE/ROUND-CHANGE justification arrays, and normal variance.
+	const wantMarginNumerator, wantMarginDenominator = 2, 1
+	required := maxBlockBytes * wantMarginNumerator / wantMarginDenominator
+
+	if MaxFuturePreprepareBytes < required {
+		t.Fatalf("MaxFuturePreprepareBytes=%d is below %dx the max legitimate block (%d bytes at %d gas / %d gas per byte); "+
+			"either the ceiling is too low or the gas-limit assumption changed — reconcile them",
+			MaxFuturePreprepareBytes, wantMarginNumerator, maxBlockBytes, assumedNetworkGasLimit, params.TxDataNonZeroGasEIP2028)
+	}
+}
 
 // makeFuturePreprepare builds a PRE-PREPARE for a future sequence whose embedded
 // block proposal carries proposalBytes of payload, sourced from src. It does not
