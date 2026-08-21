@@ -24,6 +24,10 @@ import (
 type backlogEvent struct {
 	src istanbul.Validator
 	msg qbfttypes.QBFTMessage
+	// size is the encoded wire size of msg, carried so that if the replayed
+	// message is still a future message it can be re-charged against the
+	// backlog byte budget from its own size rather than a stale count estimate.
+	size int
 }
 
 type timeoutEvent struct {

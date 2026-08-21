@@ -169,9 +169,16 @@ func (c *core) handlePreprepareMsg(preprepare *qbfttypes.Preprepare) error {
 			c.stopFuturePreprepareTimer()
 			c.futurePreprepareTimer = time.AfterFunc(duration, func() {
 				_, validator := c.valSet.GetByAddress(preprepare.Source())
+				// Charge this re-injected PRE-PREPARE its encoded size in case it
+				// ends up re-backlogged; this is a one-shot timer, not a hot path.
+				size := 0
+				if encoded, err := rlp.EncodeToBytes(preprepare); err == nil {
+					size = len(encoded)
+				}
 				c.sendEvent(backlogEvent{
-					src: validator,
-					msg: preprepare,
+					src:  validator,
+					msg:  preprepare,
+					size: size,
 				})
 			})
 		} else {

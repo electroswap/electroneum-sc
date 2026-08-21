@@ -129,7 +129,10 @@ func (c *core) handleEvents() {
 			case backlogEvent:
 				// we process again a future message that was backlogged
 				// no need to check signature as it was already node when we first received message
-				if err := c.handleDecodedMessage(ev.msg); err != nil {
+				// This message was already charged against the backlog byte budget when
+				// first admitted and has since been popped, so if it re-backlogs it is
+				// re-charged from its own encoded size; pass ev.size as its charge.
+				if err := c.handleDecodedMessage(ev.msg, ev.size); err != nil {
 					continue
 				}
 
@@ -191,15 +194,19 @@ func (c *core) handleEncodedMsg(code uint64, data []byte) error {
 		return err
 	}
 
-	return c.handleDecodedMessage(m)
+	// len(data) is the true encoded wire size of this message. We carry it into
+	// the backlog so future-message admission can charge a byte budget, not only
+	// a message count (a large PRE-PREPARE proposal is orders of magnitude bigger
+	// than the ~1KB the count cap assumes).
+	return c.handleDecodedMessage(m, len(data))
 }
 
-func (c *core) handleDecodedMessage(m qbfttypes.QBFTMessage) error {
+func (c *core) handleDecodedMessage(m qbfttypes.QBFTMessage, encodedSize int) error {
 	view := m.View()
 	if err := c.checkMessage(m.Code(), &view); err != nil {
 		// Store in the backlog it it's a future message
 		if err == errFutureMessage {
-			c.addToBacklog(m)
+			c.addToBacklog(m, encodedSize)
 		}
 		return err
 	}
