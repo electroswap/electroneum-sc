@@ -96,6 +96,15 @@ type backlogEntry struct {
 	size int
 }
 
+// carriesBlockProposal reports whether a message code can embed a full
+// *types.Block, and therefore an unbounded payload that must be size-capped
+// before it is retained in the backlog. PRE-PREPARE carries Proposal and
+// ROUND-CHANGE carries PreparedBlock; PREPARE and COMMIT carry only a fixed-size
+// digest/seal.
+func carriesBlockProposal(code uint64) bool {
+	return code == qbfttypes.PreprepareCode || code == qbfttypes.RoundChangeCode
+}
+
 var (
 	// msgPriority is defined for calculating processing priority to speedup consensus
 	// msgPreprepare > msgCommit > msgPrepare
@@ -249,14 +258,17 @@ func (c *core) addToBacklog(msg qbfttypes.QBFTMessage, encodedSize int) {
 		return
 	}
 
-	// Reject any single future PRE-PREPARE whose encoded size exceeds the
-	// per-message ceiling before it is retained. A legitimate proposal is bounded
-	// by gas well below this; anything larger is either malformed or an attempt to
-	// pin large proposals in the backlog, and the proposal is not validated until
-	// the message becomes current, so we must bound it here.
-	if msg.Code() == qbfttypes.PreprepareCode && encodedSize > MaxFuturePreprepareBytes {
-		logger.Warn("IBFT: dropping oversized future PRE-PREPARE",
-			"src", src, "size", encodedSize, "cap", MaxFuturePreprepareBytes,
+	// Reject any single future block-bearing message whose encoded size exceeds
+	// the per-message ceiling before it is retained. Both PRE-PREPARE (via its
+	// Proposal) and ROUND-CHANGE (via its PreparedBlock) can embed a full
+	// *types.Block, which is decoded and kept resident before it is ever
+	// validated. A legitimate block is bounded by gas well below this ceiling;
+	// anything larger is either malformed or an attempt to pin a large block in
+	// the backlog, so we must bound it here. PREPARE and COMMIT carry only fixed,
+	// tiny payloads and need no ceiling.
+	if carriesBlockProposal(msg.Code()) && encodedSize > MaxFuturePreprepareBytes {
+		logger.Warn("IBFT: dropping oversized future block-bearing message",
+			"src", src, "code", msg.Code(), "size", encodedSize, "cap", MaxFuturePreprepareBytes,
 		)
 		return
 	}

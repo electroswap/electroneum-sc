@@ -23,6 +23,35 @@ func makeFuturePreprepare(seq, round int64, src common.Address, proposalBytes in
 	return pp
 }
 
+// makeFutureRoundChange builds a ROUND-CHANGE for a future sequence carrying a
+// PreparedBlock of proposalBytes payload, sourced from src. Like a PRE-PREPARE,
+// a ROUND-CHANGE can embed a full block, so it is subject to the same per-message
+// ceiling.
+func makeFutureRoundChange(seq, round int64, src common.Address, proposalBytes int) *qbfttypes.RoundChange {
+	extra := make([]byte, proposalBytes)
+	block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(seq), Extra: extra})
+	rc := qbfttypes.NewRoundChange(big.NewInt(seq), big.NewInt(round), big.NewInt(round), block, false)
+	rc.SetSource(src)
+	rc.SetSignature([]byte{0x01})
+	return rc
+}
+
+// TestAddToBacklog_RejectsOversizedFutureRoundChange proves the per-message
+// ceiling also covers ROUND-CHANGE, which can embed a full PreparedBlock exactly
+// like a PRE-PREPARE's proposal.
+func TestAddToBacklog_RejectsOversizedFutureRoundChange(t *testing.T) {
+	valSet := newTestValidatorSet(4)
+	c := newTestCore(valSet, 1, 0)
+	src := valSet.List()[1].Address()
+
+	rc := makeFutureRoundChange(2, 0, src, 1024) // size argument drives the check
+	c.addToBacklog(rc, MaxFuturePreprepareBytes+1)
+
+	if c.backlogsTotal != 0 {
+		t.Fatalf("oversized future ROUND-CHANGE retained: backlogsTotal=%d, want 0", c.backlogsTotal)
+	}
+}
+
 // TestAddToBacklog_RejectsOversizedFuturePreprepare proves the per-message
 // ceiling: a single future PRE-PREPARE whose encoded size exceeds
 // MaxFuturePreprepareBytes is dropped before retention.
