@@ -25,10 +25,9 @@ import (
 
 // Genesis hashes to enforce below configs on.
 var (
-	MainnetGenesisHash = common.HexToHash("0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3")
-	HoleskyGenesisHash = common.HexToHash("0xb5f7f912443c940f21fd611f12828d75b534364ed9e95ca4e307729a4661bde4")
-	SepoliaGenesisHash = common.HexToHash("0x25a5cc106eea7138acab33231d7160d69cb777ee0c2c553fcddf5138993e6dd9")
-	GoerliGenesisHash  = common.HexToHash("0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a")
+	MainnetGenesisHash  = common.HexToHash("0x9ec40a3c9e4165b0150331271abf47984ca2614ca11b08c29a5fdd547566401b")
+	StagenetGenesisHash = common.HexToHash("0x619e6f8fa6e99eb9829e1f0c7fa62a999d47bf8a7da51a72c2af3cd83cb6e4a3")
+	TestnetGenesisHash  = common.HexToHash("0x10e52a738c4546344d46c0f0b601476cc9a7ed28dfcd62ead9528fdd1fe56a93")
 )
 
 func newUint64(val uint64) *uint64 { return &val }
@@ -37,28 +36,6 @@ var (
 	MainnetTerminalTotalDifficulty, _ = new(big.Int).SetString("58_750_000_000_000_000_000_000", 0)
 
 	// MainnetChainConfig is the chain parameters to run a node on the main network.
-	MainnetChainConfig = &ChainConfig{
-		ChainID:                       big.NewInt(1),
-		HomesteadBlock:                big.NewInt(1_150_000),
-		DAOForkBlock:                  big.NewInt(1_920_000),
-		DAOForkSupport:                true,
-		EIP150Block:                   big.NewInt(2_463_000),
-		EIP155Block:                   big.NewInt(2_675_000),
-		EIP158Block:                   big.NewInt(2_675_000),
-		ByzantiumBlock:                big.NewInt(4_370_000),
-		ConstantinopleBlock:           big.NewInt(7_280_000),
-		PetersburgBlock:               big.NewInt(7_280_000),
-		IstanbulBlock:                 big.NewInt(9_069_000),
-		MuirGlacierBlock:              big.NewInt(9_200_000),
-		BerlinBlock:                   big.NewInt(12_244_000),
-		LondonBlock:                   big.NewInt(12_965_000),
-		ArrowGlacierBlock:             big.NewInt(13_773_000),
-		GrayGlacierBlock:              big.NewInt(15_050_000),
-		TerminalTotalDifficulty:       MainnetTerminalTotalDifficulty, // 58_750_000_000_000_000_000_000
-		TerminalTotalDifficultyPassed: true,
-		ShanghaiTime:                  newUint64(1681338455),
-		Ethash:                        new(EthashConfig),
-	}
 	// HoleskyChainConfig contains the chain parameters to run a node on the Holesky test network.
 	HoleskyChainConfig = &ChainConfig{
 		ChainID:                       big.NewInt(17000),

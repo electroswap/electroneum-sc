@@ -19,6 +19,10 @@ package ethconfig
 
 import (
 	"errors"
+	"fmt"
+	"github.com/electroneum/electroneum-sc/consensus/istanbul"
+	istanbulBackend "github.com/electroneum/electroneum-sc/consensus/istanbul/backend"
+	"github.com/electroneum/electroneum-sc/crypto"
 	"time"
 
 	"github.com/electroneum/electroneum-sc/common"
@@ -172,6 +176,30 @@ type Config struct {
 // Clique is allowed for now to live standalone, but ethash is forbidden and can
 // only exist on already merged networks.
 func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database) (consensus.Engine, error) {
+	// Electroneum runs QBFT, so it takes precedence over every Ethereum engine.
+	if config.IBFT != nil {
+		// The signing key only matters for PROPOSING blocks. This build follows
+		// and verifies the chain but does not seal, so rather than plumb the
+		// node key through a factory that upstream no longer gives a *node.Node,
+		// generate an ephemeral one. Backend.New dereferences the key to derive
+		// its address, so nil is not an option.
+		//
+		// Restoring the proposer path means passing the real node key here --
+		// see electroswap/PORT-INVENTORY.md, Stage 3d.
+		key, err := crypto.GenerateKey()
+		if err != nil {
+			return nil, fmt.Errorf("istanbul: ephemeral key: %w", err)
+		}
+		return istanbulBackend.New(istanbul.Config{
+			BlockPeriod:              config.IBFT.BlockPeriodSeconds,
+			Epoch:                    config.IBFT.EpochLength,
+			ProposerPolicy:           istanbul.NewProposerPolicy(istanbul.ProposerPolicyId(config.IBFT.ProposerPolicy)),
+			RequestTimeoutSeconds:    config.IBFT.RequestTimeoutSeconds,
+			MaxRequestTimeoutSeconds: config.IBFT.MaxRequestTimeoutSeconds,
+			AllowedFutureBlockTime:   config.IBFT.AllowedFutureBlockTime,
+			Transitions:              config.Transitions,
+		}, key, db), nil
+	}
 	// If proof-of-authority is requested, set it up
 	if config.Clique != nil {
 		return beacon.New(clique.New(config.Clique, db)), nil

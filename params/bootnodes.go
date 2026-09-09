@@ -89,15 +89,15 @@ const dnsPrefix = "enrtree://AKA3AM6LPBYEUDMVNU3BSVQJ5AD45Y7YPOHJLEF6W26QOE4VTUD
 // information.
 func KnownDNSNetwork(genesis common.Hash, protocol string) string {
 	var net string
+	// Electroneum publishes no discv4 DNS lists, so this only ever names the
+	// network for logging; there is nothing to resolve against ethdisco.net.
 	switch genesis {
 	case MainnetGenesisHash:
 		net = "mainnet"
-	case GoerliGenesisHash:
-		net = "goerli"
-	case SepoliaGenesisHash:
-		net = "sepolia"
-	case HoleskyGenesisHash:
-		net = "holesky"
+	case TestnetGenesisHash:
+		net = "testnet"
+	case StagenetGenesisHash:
+		net = "stagenet"
 	default:
 		return ""
 	}

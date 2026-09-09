@@ -111,7 +111,22 @@ type headerMarshaling struct {
 
 // Hash returns the block hash of the header, which is simply the keccak256 hash of its
 // RLP encoding.
+//
+// On Electroneum this is NOT plain rlpHash. An IBFT header carries the
+// proposer's committed seals inside Extra, and those seals are produced by
+// signing the hash -- so the hash has to be taken over the header with the seal
+// field emptied, or it could never be computed in the first place.
+//
+// This is the single most consensus-critical function in the fork: every block
+// hash, every ParentHash link and every signature on the chain depends on it.
+// Genesis has no seals, so it hashes identically either way, which makes a
+// mistake here look fine for exactly one block.
 func (h *Header) Hash() common.Hash {
+	if h != nil && h.MixDigest == IstanbulDigest {
+		if istanbulHeader := FilteredHeader(h); istanbulHeader != nil {
+			return rlpHash(istanbulHeader)
+		}
+	}
 	return rlpHash(h)
 }
 

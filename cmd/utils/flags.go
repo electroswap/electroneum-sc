@@ -1812,24 +1812,21 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		}
 		cfg.Genesis = core.DefaultGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
-	case ctx.Bool(HoleskyFlag.Name):
-		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 17000
-		}
-		cfg.Genesis = core.DefaultHoleskyGenesisBlock()
-		SetDNSDiscoveryDefaults(cfg, params.HoleskyGenesisHash)
+	// Electroneum's own networks reuse upstream's testnet flags rather than
+	// introducing new ones, so --sepolia selects ETN testnet (5201420) and
+	// --goerli selects stagenet (5201419).
 	case ctx.Bool(SepoliaFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 11155111
+			cfg.NetworkId = 5201420
 		}
-		cfg.Genesis = core.DefaultSepoliaGenesisBlock()
-		SetDNSDiscoveryDefaults(cfg, params.SepoliaGenesisHash)
+		cfg.Genesis = core.DefaultTestnetGenesisBlock()
+		SetDNSDiscoveryDefaults(cfg, params.TestnetGenesisHash)
 	case ctx.Bool(GoerliFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 5
+			cfg.NetworkId = 5201419
 		}
-		cfg.Genesis = core.DefaultGoerliGenesisBlock()
-		SetDNSDiscoveryDefaults(cfg, params.GoerliGenesisHash)
+		cfg.Genesis = core.DefaultStagenetGenesisBlock()
+		SetDNSDiscoveryDefaults(cfg, params.StagenetGenesisHash)
 	case ctx.Bool(DeveloperFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 1337
@@ -2150,12 +2147,10 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 	switch {
 	case ctx.Bool(MainnetFlag.Name):
 		genesis = core.DefaultGenesisBlock()
-	case ctx.Bool(HoleskyFlag.Name):
-		genesis = core.DefaultHoleskyGenesisBlock()
 	case ctx.Bool(SepoliaFlag.Name):
-		genesis = core.DefaultSepoliaGenesisBlock()
+		genesis = core.DefaultTestnetGenesisBlock()
 	case ctx.Bool(GoerliFlag.Name):
-		genesis = core.DefaultGoerliGenesisBlock()
+		genesis = core.DefaultStagenetGenesisBlock()
 	case ctx.Bool(DeveloperFlag.Name):
 		Fatalf("Developer chains are ephemeral")
 	}

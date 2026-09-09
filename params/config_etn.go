@@ -16,6 +16,7 @@ import (
 	"math/big"
 
 	"github.com/electroneum/electroneum-sc/common"
+	"github.com/electroneum/electroneum-sc/common/math"
 )
 
 // IBFTConfig is the consensus engine configs for Istanbul based sealing.
@@ -147,3 +148,112 @@ func isTransitionsConfigCompatible(c1, c2 *ChainConfig, head *big.Int) (*big.Int
 // GetBaseBlockReward clamps against it: once circulating supply reaches this
 // value the block reward is zero.
 const ETNMaxSupply = "21000000000000000000000000000"
+
+// Electroneum networks. These replace go-ethereum's Ethereum chain configs:
+// this node only ever speaks to Electroneum.
+//
+// Note what is NOT set. Shanghai and Cancun are absent, so PUSH0, transient
+// storage and blob transactions never activate -- Electroneum has not
+// scheduled them, and enabling one would fork us off the network.
+var (
+	// MainnetChainConfig is the chain parameters to run a node on the main network.
+	MainnetChainConfig = &ChainConfig{
+		ChainID:             big.NewInt(52014),
+		HomesteadBlock:      big.NewInt(0),
+		DAOForkBlock:        nil,
+		DAOForkSupport:      true,
+		EIP150Block:         big.NewInt(0),
+		EIP155Block:         big.NewInt(0),
+		EIP158Block:         big.NewInt(0),
+		ByzantiumBlock:      big.NewInt(0),
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		MuirGlacierBlock:    nil,
+		BerlinBlock:         big.NewInt(0),
+		LondonBlock:         big.NewInt(0),
+		ArrowGlacierBlock:   nil,
+		FutureForkBlock:     big.NewInt(math.MaxInt64),
+		IBFT: &IBFTConfig{
+			BlockPeriodSeconds:       5,
+			EpochLength:              17280,
+			ProposerPolicy:           0,
+			RequestTimeoutSeconds:    10,
+			MaxRequestTimeoutSeconds: 60,
+			AllowedFutureBlockTime:   5,
+		},
+		GenesisETN:                         math.MustParseBig256("17964946965760000000000000000"), // = terminal circulating supply for legacy mainnet [0,1806749}. Legacy emissions are burned from height 1806749 onwards
+		LegacyV9ForkHeight:                 big.NewInt(862866),
+		LegacyToSmartchainMigrationHeight:  big.NewInt(1806749),
+		PriorityTransactorsContractAddress: common.HexToAddress("0x92cdf1fc0e54d3150f100265ae2717b0689660ee"),
+		Transitions:                        []Transition{},
+	}
+
+	// StagenetChainConfig is the chain parameters to run a node on the test network.
+	StagenetChainConfig = &ChainConfig{
+		ChainID:             big.NewInt(5201419),
+		HomesteadBlock:      big.NewInt(0),
+		DAOForkBlock:        nil,
+		DAOForkSupport:      true,
+		EIP150Block:         big.NewInt(0),
+		EIP155Block:         big.NewInt(0),
+		EIP158Block:         big.NewInt(0),
+		ByzantiumBlock:      big.NewInt(0),
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		MuirGlacierBlock:    nil,
+		BerlinBlock:         big.NewInt(0),
+		LondonBlock:         big.NewInt(0),
+		ArrowGlacierBlock:   nil,
+		FutureForkBlock:     big.NewInt(math.MaxInt64),
+		IBFT: &IBFTConfig{
+			BlockPeriodSeconds:       5,
+			EpochLength:              17280,
+			ProposerPolicy:           0,
+			RequestTimeoutSeconds:    10,
+			MaxRequestTimeoutSeconds: 60,
+			AllowedFutureBlockTime:   5,
+		},
+		GenesisETN:                         math.MustParseBig256("2000000000000000000000000000"), // 2Bn ETN allocated to developer accounts for testing
+		LegacyV9ForkHeight:                 big.NewInt(862866),
+		LegacyToSmartchainMigrationHeight:  big.NewInt(0),
+		PriorityTransactorsContractAddress: common.HexToAddress("0x92cdf1fc0e54d3150f100265ae2717b0689660ee"),
+	}
+
+	// TestnetChainConfig is the chain parameters to run a node on the test network.
+	TestnetChainConfig = &ChainConfig{
+		ChainID:             big.NewInt(5201420),
+		HomesteadBlock:      big.NewInt(0),
+		DAOForkBlock:        nil,
+		DAOForkSupport:      true,
+		EIP150Block:         big.NewInt(0),
+		EIP155Block:         big.NewInt(0),
+		EIP158Block:         big.NewInt(0),
+		ByzantiumBlock:      big.NewInt(0),
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		MuirGlacierBlock:    nil,
+		BerlinBlock:         big.NewInt(0),
+		LondonBlock:         big.NewInt(0),
+		ArrowGlacierBlock:   nil,
+		FutureForkBlock:     big.NewInt(math.MaxInt64),
+		IBFT: &IBFTConfig{
+			BlockPeriodSeconds:       5,
+			EpochLength:              17280,
+			ProposerPolicy:           0,
+			RequestTimeoutSeconds:    10,
+			MaxRequestTimeoutSeconds: 60,
+			AllowedFutureBlockTime:   5,
+		},
+		// I observed that the legacy testnet gen block had billions emitted and later the 21B max supply overflowed.
+		// Therefore I have entered the circ supply correct to up to and including the **MAINNET*** height 1675364 to
+		// help mock the mainnet with the testnet (for now...we may do a reset further down the road)
+		GenesisETN:                         math.MustParseBig256("17951808565760000000000000000"),
+		LegacyV9ForkHeight:                 big.NewInt(707121),
+		LegacyToSmartchainMigrationHeight:  big.NewInt(1455270),
+		PriorityTransactorsContractAddress: common.HexToAddress("0x1ef0959497375a7539e487749584aeb4947b7a90"),
+		Transitions:                        []Transition{},
+	}
+)
