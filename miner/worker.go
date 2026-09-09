@@ -19,6 +19,7 @@ package miner
 import (
 	"errors"
 	"fmt"
+	"github.com/electroneum/electroneum-sc/ethdb"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -365,11 +366,36 @@ func (w *worker) pendingBlockAndReceipts() (*types.Block, types.Receipts) {
 // start sets the running status as 1 and triggers new work submitting.
 func (w *worker) start() {
 	w.running.Store(true)
+	// Electroneum: starting the miner is what starts the QBFT consensus core --
+	// the round machinery that proposes blocks and exchanges PRE-PREPARE,
+	// PREPARE and COMMIT with the other validators. Without this the engine can
+	// verify the chain but never participate in producing it.
+	if istanbul, ok := w.engine.(consensus.Istanbul); ok {
+		// Two upstream changes have to be adapted around. CurrentBlock returns
+		// a *types.Header now, and rawdb.HasBadBlock is gone; the bad-block set
+		// it consulted no longer exists, so nothing is ever a known-bad block.
+		currentBlock := func() *types.Block {
+			h := w.chain.CurrentBlock()
+			if h == nil {
+				return nil
+			}
+			return w.chain.GetBlock(h.Hash(), h.Number.Uint64())
+		}
+		hasBadBlock := func(ethdb.Reader, common.Hash) bool { return false }
+		if err := istanbul.Start(w.chain, currentBlock, hasBadBlock); err != nil {
+			log.Error("IBFT: failed to start the consensus core", "err", err)
+		}
+	}
 	w.startCh <- struct{}{}
 }
 
 // stop sets the running status as 0.
 func (w *worker) stop() {
+	if istanbul, ok := w.engine.(consensus.Istanbul); ok {
+		if err := istanbul.Stop(); err != nil {
+			log.Error("IBFT: failed to stop the consensus core", "err", err)
+		}
+	}
 	w.running.Store(false)
 }
 
