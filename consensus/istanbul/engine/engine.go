@@ -108,7 +108,7 @@ func writeRoundNumber(round *big.Int) ApplyQBFTExtra {
 
 func (e *Engine) VerifyBlockProposal(chain consensus.ChainHeaderReader, block *types.Block, validators istanbul.ValidatorSet) (time.Duration, error) {
 	// check block body
-	txnHash := types.DeriveSha(block.Transactions(), new(trie.Trie))
+	txnHash := types.DeriveSha(block.Transactions(), trie.NewStackTrie(nil))
 	if txnHash != block.Header().TxHash {
 		return 0, istanbulcommon.ErrMismatchTxhashes
 	}
@@ -486,7 +486,7 @@ func (e *Engine) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 // nor block rewards given, and returns the final block.
 func (e *Engine) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt, withdrawals []*types.Withdrawal) (*types.Block, error) {
 	// Assemble and return the final block for sealing
-	return types.NewBlock(header, txs, nil, receipts, new(trie.Trie)), nil
+	return types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil)), nil
 }
 
 // Seal generates a new block for the given input block with the local miner's

@@ -103,7 +103,7 @@ func newEIP1559Fixture(t *testing.T) *eip1559TestFixture {
 		UncleHash:  types.EmptyUncleHash,
 		Time:       1,
 		GasLimit:   parentGasLimit,
-		GasUsed:    parentGasLimit / params.ElasticityMultiplier,
+		GasUsed:    parentGasLimit / params.DefaultElasticityMultiplier,
 		BaseFee:    big.NewInt(params.InitialBaseFee),
 	}
 	if err := ApplyHeaderQBFTExtra(parent, WriteValidators(addrs), writeRoundNumber(big.NewInt(0))); err != nil {

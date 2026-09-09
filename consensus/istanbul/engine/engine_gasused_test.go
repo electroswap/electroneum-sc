@@ -71,7 +71,7 @@ func TestVerifyBlockProposal_GasUsedExceedsGasLimit_Rejected(t *testing.T) {
 	// than an explicit parents slice, so the reader must serve the fixture's
 	// parent header.
 	chain := &gasUsedChainReader{mockChainHeaderReader: *f.chain, parent: f.parent}
-	block := types.NewBlock(h, nil, nil, nil, new(trie.Trie))
+	block := types.NewBlock(h, nil, nil, nil, trie.NewStackTrie(nil))
 
 	if _, err := f.engine.VerifyBlockProposal(chain, block, f.valSet); err == nil {
 		t.Fatal("VerifyBlockProposal accepted a header with GasUsed > GasLimit")
