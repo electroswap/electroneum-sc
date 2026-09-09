@@ -27,6 +27,7 @@ import (
 
 	"github.com/electroneum/electroneum-sc/common"
 	"github.com/electroneum/electroneum-sc/consensus"
+	istanbulcore "github.com/electroneum/electroneum-sc/consensus/istanbul"
 	"github.com/electroneum/electroneum-sc/consensus/misc/eip1559"
 	"github.com/electroneum/electroneum-sc/consensus/misc/eip4844"
 	"github.com/electroneum/electroneum-sc/core"
@@ -382,8 +383,15 @@ func (w *worker) start() {
 			return w.chain.GetBlock(h.Hash(), h.Number.Uint64())
 		}
 		hasBadBlock := func(ethdb.Reader, common.Hash) bool { return false }
+		// ErrStartedEngine just means the core is already running, which happens
+		// every time the miner is restarted after a sync pause. Only anything
+		// else is worth an error.
 		if err := istanbul.Start(w.chain, currentBlock, hasBadBlock); err != nil {
-			log.Error("IBFT: failed to start the consensus core", "err", err)
+			if errors.Is(err, istanbulcore.ErrStartedEngine) {
+				log.Debug("IBFT: consensus core already started")
+			} else {
+				log.Error("IBFT: failed to start the consensus core", "err", err)
+			}
 		}
 	}
 	w.startCh <- struct{}{}
@@ -392,8 +400,15 @@ func (w *worker) start() {
 // stop sets the running status as 0.
 func (w *worker) stop() {
 	if istanbul, ok := w.engine.(consensus.Istanbul); ok {
+		// A node that is not sealing stops the miner on every sync start, so
+		// ErrStoppedEngine is the normal case, not a fault. Electroneum discards
+		// this error entirely; we keep it so a real failure is still visible.
 		if err := istanbul.Stop(); err != nil {
-			log.Error("IBFT: failed to stop the consensus core", "err", err)
+			if errors.Is(err, istanbulcore.ErrStoppedEngine) {
+				log.Debug("IBFT: consensus core already stopped")
+			} else {
+				log.Error("IBFT: failed to stop the consensus core", "err", err)
+			}
 		}
 	}
 	w.running.Store(false)
