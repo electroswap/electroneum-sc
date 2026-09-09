@@ -447,6 +447,15 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 	effectiveTip := msg.GasPrice
 	if rules.IsLondon {
 		effectiveTip = cmath.BigMin(msg.GasTipCap, new(big.Int).Sub(msg.GasFeeCap, st.evm.Context.BaseFee))
+		// Electroneum: a waiver transaction carries all-zero fee fields, so this
+		// is min(0, 0-baseFee) = -baseFee. Left unclamped the coinbase would be
+		// DEBITED gasUsed * baseFee for including a zero-fee transaction, which
+		// diverges the state root rather than failing outright. Upstream only
+		// guards this under NoBaseFee, which applies to simulated calls and not
+		// to block processing.
+		if effectiveTip.Sign() < 0 {
+			effectiveTip = new(big.Int)
+		}
 	}
 
 	if st.evm.Config.NoBaseFee && msg.GasFeeCap.Sign() == 0 && msg.GasTipCap.Sign() == 0 {
