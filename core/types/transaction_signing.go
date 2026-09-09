@@ -171,6 +171,14 @@ type Signer interface {
 	// private key. This hash does not uniquely identify the transaction.
 	Hash(tx *Transaction) common.Hash
 
+	// PrioritySender returns the public key that made a PriorityTx's second
+	// signature, verifying it in the process. Signers that predate the type
+	// return ErrTxTypeNotSupported.
+	PrioritySender(tx *Transaction) (common.PublicKey, error)
+
+	// PriorityHash returns the hash the priority key signs over.
+	PriorityHash(tx *Transaction) common.Hash
+
 	// Equal returns true if the given signer is the same as the receiver.
 	Equal(Signer) bool
 }
@@ -284,14 +292,21 @@ func (s londonSigner) Equal(s2 Signer) bool {
 }
 
 func (s londonSigner) SignatureValues(tx *Transaction, sig []byte) (R, S, V *big.Int, err error) {
-	txdata, ok := tx.inner.(*DynamicFeeTx)
-	if !ok {
+	// A PriorityTx signs the same way a dynamic-fee transaction does; only the
+	// chain-ID field lives on a different struct.
+	var chainID *big.Int
+	switch txdata := tx.inner.(type) {
+	case *DynamicFeeTx:
+		chainID = txdata.ChainID
+	case *PriorityTx:
+		chainID = txdata.ChainID
+	default:
 		return s.eip2930Signer.SignatureValues(tx, sig)
 	}
 	// Check that chain ID of tx matches the signer. We also accept ID zero here,
 	// because it indicates that the chain ID was not specified in the tx.
-	if txdata.ChainID.Sign() != 0 && txdata.ChainID.Cmp(s.chainId) != 0 {
-		return nil, nil, nil, fmt.Errorf("%w: have %d want %d", ErrInvalidChainId, txdata.ChainID, s.chainId)
+	if chainID.Sign() != 0 && chainID.Cmp(s.chainId) != 0 {
+		return nil, nil, nil, fmt.Errorf("%w: have %d want %d", ErrInvalidChainId, chainID, s.chainId)
 	}
 	R, S, _ = decodeSignature(sig)
 	V = big.NewInt(int64(sig[64]))
