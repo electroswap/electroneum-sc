@@ -144,6 +144,11 @@ type Message struct {
 	// account nonce in state. It also disables checking that the sender is an EOA.
 	// This field will be set to true for operations like RPC eth_call.
 	SkipAccountChecks bool
+
+	// PrioritySender is the public key that signed a PriorityTx's second
+	// signature, or the zero value for an ordinary transaction. It is what the
+	// fee rules use to look the sender up in the priority-transactor allowlist.
+	PrioritySender common.PublicKey
 }
 
 // TransactionToMessage converts a transaction into a Message.
@@ -168,6 +173,14 @@ func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.In
 	}
 	var err error
 	msg.From, err = types.Sender(s, tx)
+	if err != nil {
+		return msg, err
+	}
+	// Carry the priority public key through. Sender has already verified the
+	// second signature, so a failure here means the transaction is malformed.
+	if tx.Type() == types.PriorityTxType {
+		msg.PrioritySender, err = types.PrioritySender(s, tx)
+	}
 	return msg, err
 }
 
@@ -305,9 +318,17 @@ func (st *StateTransition) preCheck() error {
 				return fmt.Errorf("%w: address %v, maxPriorityFeePerGas: %s, maxFeePerGas: %s", ErrTipAboveFeeCap,
 					msg.From.Hex(), msg.GasTipCap, msg.GasFeeCap)
 			}
+			// Electroneum: a priority transactor holding a gas-price waiver is
+			// exempt from the base-fee floor entirely. This is the mechanism
+			// behind zero-fee transactions, and it is ~3.5% of mainnet traffic.
+			hasGasPriceWaiver, err := validatePriorityGasFields(st.evm, msg)
+			if err != nil {
+				return err
+			}
+
 			// This will panic if baseFee is nil, but basefee presence is verified
 			// as part of header validation.
-			if msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
+			if !hasGasPriceWaiver && msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
 				return fmt.Errorf("%w: address %v, maxFeePerGas: %s baseFee: %s", ErrFeeCapTooLow,
 					msg.From.Hex(), msg.GasFeeCap, st.evm.Context.BaseFee)
 			}

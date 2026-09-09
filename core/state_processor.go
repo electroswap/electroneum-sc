@@ -80,6 +80,12 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
 		ProcessBeaconBlockRoot(*beaconRoot, vmenv, statedb)
 	}
+	// Electroneum: read the priority-transactor allowlist from its on-chain
+	// contract once for the whole block. The fee rules consult it for every
+	// priority transaction, so caching it here keeps that to a single EVM call
+	// rather than one per transaction.
+	statedb.SetPriorityTransactors(GetPriorityTransactors(vmenv))
+
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		msg, err := TransactionToMessage(tx, signer, header.BaseFee)

@@ -26,6 +26,12 @@ import (
 
 // StateDB is an EVM database for full state querying.
 type StateDB interface {
+	// GetPriorityTransactorByKey looks a priority public key up in the
+	// allowlist cached for the block being processed. Electroneum's fee rules
+	// consult it during the state transition, which is why it sits on the EVM's
+	// view of state rather than only on *state.StateDB.
+	GetPriorityTransactorByKey(common.PublicKey) (common.PriorityTransactor, bool)
+
 	CreateAccount(common.Address)
 
 	SubBalance(common.Address, *big.Int)

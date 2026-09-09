@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/electroneum/electroneum-sc/common"
@@ -59,6 +60,13 @@ type revision struct {
 // must be created with new root and updated database for accessing post-
 // commit states.
 type StateDB struct {
+	// Electroneum: the priority-transactor allowlist, read from the on-chain
+	// contract once per block and consulted per transaction. It is cached here
+	// rather than re-queried because the fee rules need it during every state
+	// transition.
+	priorityTransactorsMu sync.Mutex
+	priorityTransactors   common.PriorityTransactorMap
+
 	db         Database
 	prefetcher *triePrefetcher
 	trie       Trie
@@ -147,6 +155,7 @@ func New(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) 
 		return nil, err
 	}
 	sdb := &StateDB{
+		priorityTransactors:  make(common.PriorityTransactorMap),
 		db:                   db,
 		trie:                 tr,
 		originalRoot:         root,
