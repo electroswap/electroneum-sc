@@ -1498,6 +1498,24 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 			result.GasPrice = (*hexutil.Big)(tx.GasFeeCap())
 		}
 
+	case types.PriorityTxType:
+		// Electroneum's priority transaction marshals like a dynamic-fee one.
+		// The priority signature itself is deliberately NOT exposed: the live
+		// network does not publish priorityV/R/S either, and adding it here
+		// would change a wire format our own services already depend on.
+		al := tx.AccessList()
+		yparity := hexutil.Uint64(v.Sign())
+		result.Accesses = &al
+		result.ChainID = (*hexutil.Big)(tx.ChainId())
+		result.YParity = &yparity
+		result.GasFeeCap = (*hexutil.Big)(tx.GasFeeCap())
+		result.GasTipCap = (*hexutil.Big)(tx.GasTipCap())
+		if baseFee != nil && blockHash != (common.Hash{}) {
+			result.GasPrice = (*hexutil.Big)(effectiveGasPrice(tx, baseFee))
+		} else {
+			result.GasPrice = (*hexutil.Big)(tx.GasFeeCap())
+		}
+
 	case types.BlobTxType:
 		al := tx.AccessList()
 		yparity := hexutil.Uint64(v.Sign())

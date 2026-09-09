@@ -882,9 +882,9 @@ func getGenesis(genesisFlag string, goerliFlag bool, sepoliaFlag bool) (*core.Ge
 		err := common.LoadJSON(genesisFlag, &genesis)
 		return &genesis, err
 	case goerliFlag:
-		return core.DefaultGoerliGenesisBlock(), nil
+		return core.DefaultStagenetGenesisBlock(), nil
 	case sepoliaFlag:
-		return core.DefaultSepoliaGenesisBlock(), nil
+		return core.DefaultTestnetGenesisBlock(), nil
 	default:
 		return nil, errors.New("no genesis flag provided")
 	}
