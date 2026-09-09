@@ -225,6 +225,17 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Electroneum runs QBFT messages over their own devp2p subprotocol alongside
+	// the eth one, so the node has to advertise both. The engine names it.
+	if chainConfig.IBFT != nil {
+		if p, ok := eth.engine.(interface{ Protocol() consensus.Protocol }); ok {
+			proto := p.Protocol()
+			ibftConsensusProtocolName = proto.Name
+			ibftConsensusProtocolVersions = proto.Versions
+			ibftConsensusProtocolLengths = proto.Lengths
+		}
+	}
+
 	// Permit the downloader to use the trie cache allowance during fast sync
 	cacheLimit := cacheConfig.TrieCleanLimit + cacheConfig.TrieDirtyLimit + cacheConfig.SnapshotLimit
 	if eth.handler, err = newHandler(&handlerConfig{
@@ -240,6 +251,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}); err != nil {
 		return nil, err
 	}
+	eth.handler.engine = eth.engine
 
 	eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, eth.isLocalBlock)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
@@ -490,6 +502,12 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 	protos := eth.MakeProtocols((*ethHandler)(s.handler), s.networkID, s.ethDialCandidates)
 	if s.config.SnapshotCache > 0 {
 		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler), s.snapDialCandidates)...)
+	}
+	// Add the IBFT consensus subprotocol ("etn-istanbul/100") alongside "etn".
+	// Unlike older Quorum builds this does not replace the eth subprotocol; the
+	// node speaks both.
+	if ibftConsensusProtocolName != "" && ibftConsensusProtocolName != eth.ProtocolName {
+		protos = append(protos, s.ibftConsensusProtocols()...)
 	}
 	return protos
 }
