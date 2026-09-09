@@ -256,7 +256,7 @@ func NewLondonSigner(chainId *big.Int) Signer {
 }
 
 func (s londonSigner) Sender(tx *Transaction) (common.Address, error) {
-	if tx.Type() != DynamicFeeTxType {
+	if tx.Type() != DynamicFeeTxType && tx.Type() != PriorityTxType {
 		return s.eip2930Signer.Sender(tx)
 	}
 	V, R, S := tx.RawSignatureValues()
@@ -265,6 +265,15 @@ func (s londonSigner) Sender(tx *Transaction) (common.Address, error) {
 	V = new(big.Int).Add(V, big.NewInt(27))
 	if tx.ChainId().Cmp(s.chainId) != 0 {
 		return common.Address{}, fmt.Errorf("%w: have %d want %d", ErrInvalidChainId, tx.ChainId(), s.chainId)
+	}
+	// A priority transaction is only well-formed if its SECOND signature also
+	// recovers. Checking it here means an invalid priority signature rejects the
+	// transaction everywhere Sender is called, rather than only where something
+	// remembers to ask for the priority key.
+	if tx.Type() == PriorityTxType {
+		if _, err := s.PrioritySender(tx); err != nil {
+			return common.Address{}, err
+		}
 	}
 	return recoverPlain(s.Hash(tx), R, S, V, true)
 }
@@ -292,7 +301,9 @@ func (s londonSigner) SignatureValues(tx *Transaction, sig []byte) (R, S, V *big
 // Hash returns the hash to be signed by the sender.
 // It does not uniquely identify the transaction.
 func (s londonSigner) Hash(tx *Transaction) common.Hash {
-	if tx.Type() != DynamicFeeTxType {
+	// A PriorityTx signs over the same body as a dynamic-fee transaction: both
+	// the sender's signature and the priority signature cover this hash.
+	if tx.Type() != DynamicFeeTxType && tx.Type() != PriorityTxType {
 		return s.eip2930Signer.Hash(tx)
 	}
 	return prefixedRlpHash(
