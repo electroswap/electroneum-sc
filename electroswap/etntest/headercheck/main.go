@@ -425,7 +425,34 @@ func (s *stream) next() ([]*types.Header, []common.Hash, error) {
 	return r.headers, r.hashes, r.err
 }
 
+// fetchRange retries transient transport failures. A whole-chain run takes
+// hours against a live node, and that node can be restarted, reloaded or simply
+// drop an IPC connection under load. Abandoning 2.7 hours of verified headers
+// because one batch returned EOF is not a useful failure mode -- a genuine
+// consensus divergence is reported by the caller, not by the transport.
 func fetchRange(ctx context.Context, client *rpc.Client, lo, hi uint64) ([]*types.Header, []common.Hash, error) {
+	const attempts = 12
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			delay := time.Duration(attempt*attempt) * time.Second // 1s, 4s, 9s ... ~6min total
+			fmt.Printf("  transport error at %d..%d (%v); retrying in %s\n", lo, hi, lastErr, delay)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			}
+		}
+		h, hashes, err := fetchRangeOnce(ctx, client, lo, hi)
+		if err == nil {
+			return h, hashes, nil
+		}
+		lastErr = err
+	}
+	return nil, nil, fmt.Errorf("batch %d..%d failed after %d attempts: %w", lo, hi, attempts, lastErr)
+}
+
+func fetchRangeOnce(ctx context.Context, client *rpc.Client, lo, hi uint64) ([]*types.Header, []common.Hash, error) {
 	n := int(hi-lo) + 1
 	elems := make([]rpc.BatchElem, n)
 	raws := make([]json.RawMessage, n)
