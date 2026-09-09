@@ -158,6 +158,16 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 	receipt.BlockHash = blockHash
 	receipt.BlockNumber = blockNumber
 	receipt.TransactionIndex = uint(statedb.TxIndex())
+
+	// Electroneum: the allowlist is cached once per block, so a transaction that
+	// edits the priority-transactor contract must invalidate it for the rest of
+	// the block. Without this, a transactor added in block N is not recognised
+	// until N+1, and a node that refreshed would compute a different state root
+	// from one that did not -- a chain split, triggered by a single mainnet
+	// transaction to one known address.
+	if msg.To != nil && *msg.To == config.GetPriorityTransactorsContractAddress(blockNumber) {
+		statedb.SetPriorityTransactors(GetPriorityTransactors(evm))
+	}
 	return receipt, err
 }
 
