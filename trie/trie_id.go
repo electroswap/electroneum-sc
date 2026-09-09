@@ -16,7 +16,7 @@
 
 package trie
 
-import "github.com/ethereum/go-ethereum/common"
+import "github.com/electroneum/electroneum-sc/common"
 
 // ID is the identifier for uniquely identifying a trie.
 type ID struct {

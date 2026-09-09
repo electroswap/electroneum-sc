@@ -21,9 +21,9 @@ import (
 	"io"
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/math"
-	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/electroneum/electroneum-sc/common"
+	"github.com/electroneum/electroneum-sc/common/math"
+	"github.com/electroneum/electroneum-sc/core/vm"
 )
 
 type JSONLogger struct {

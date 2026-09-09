@@ -19,8 +19,8 @@ package catalyst
 import (
 	"context"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/electroneum/electroneum-sc/common"
+	"github.com/electroneum/electroneum-sc/core/types"
 )
 
 type api struct {

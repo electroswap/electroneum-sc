@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/electroneum/electroneum-sc/core/types"
+	"github.com/electroneum/electroneum-sc/rlp"
 	"github.com/holiman/uint256"
 )
 

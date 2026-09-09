@@ -17,7 +17,7 @@
 package snap
 
 import (
-	metrics "github.com/ethereum/go-ethereum/metrics"
+	metrics "github.com/electroneum/electroneum-sc/metrics"
 )
 
 var (

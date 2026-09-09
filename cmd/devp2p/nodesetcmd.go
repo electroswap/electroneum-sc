@@ -25,11 +25,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/forkid"
-	"github.com/ethereum/go-ethereum/p2p/enr"
-	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/electroneum/electroneum-sc/core"
+	"github.com/electroneum/electroneum-sc/core/forkid"
+	"github.com/electroneum/electroneum-sc/p2p/enr"
+	"github.com/electroneum/electroneum-sc/params"
+	"github.com/electroneum/electroneum-sc/rlp"
 	"github.com/urfave/cli/v2"
 )
 

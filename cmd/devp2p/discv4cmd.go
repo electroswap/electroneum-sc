@@ -24,13 +24,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ethereum/go-ethereum/cmd/devp2p/internal/v4test"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/internal/flags"
-	"github.com/ethereum/go-ethereum/p2p/discover"
-	"github.com/ethereum/go-ethereum/p2p/enode"
-	"github.com/ethereum/go-ethereum/params"
+	"github.com/electroneum/electroneum-sc/cmd/devp2p/internal/v4test"
+	"github.com/electroneum/electroneum-sc/common"
+	"github.com/electroneum/electroneum-sc/crypto"
+	"github.com/electroneum/electroneum-sc/internal/flags"
+	"github.com/electroneum/electroneum-sc/p2p/discover"
+	"github.com/electroneum/electroneum-sc/p2p/enode"
+	"github.com/electroneum/electroneum-sc/params"
 	"github.com/urfave/cli/v2"
 )
 

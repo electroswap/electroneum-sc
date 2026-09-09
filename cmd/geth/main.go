@@ -25,25 +25,25 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts"
-	"github.com/ethereum/go-ethereum/accounts/keystore"
-	"github.com/ethereum/go-ethereum/cmd/utils"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/console/prompt"
-	"github.com/ethereum/go-ethereum/eth"
-	"github.com/ethereum/go-ethereum/eth/downloader"
-	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/ethereum/go-ethereum/internal/debug"
-	"github.com/ethereum/go-ethereum/internal/ethapi"
-	"github.com/ethereum/go-ethereum/internal/flags"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/metrics"
-	"github.com/ethereum/go-ethereum/node"
+	"github.com/electroneum/electroneum-sc/accounts"
+	"github.com/electroneum/electroneum-sc/accounts/keystore"
+	"github.com/electroneum/electroneum-sc/cmd/utils"
+	"github.com/electroneum/electroneum-sc/common"
+	"github.com/electroneum/electroneum-sc/console/prompt"
+	"github.com/electroneum/electroneum-sc/eth"
+	"github.com/electroneum/electroneum-sc/eth/downloader"
+	"github.com/electroneum/electroneum-sc/ethclient"
+	"github.com/electroneum/electroneum-sc/internal/debug"
+	"github.com/electroneum/electroneum-sc/internal/ethapi"
+	"github.com/electroneum/electroneum-sc/internal/flags"
+	"github.com/electroneum/electroneum-sc/log"
+	"github.com/electroneum/electroneum-sc/metrics"
+	"github.com/electroneum/electroneum-sc/node"
 	"go.uber.org/automaxprocs/maxprocs"
 
 	// Force-load the tracer engines to trigger registration
-	_ "github.com/ethereum/go-ethereum/eth/tracers/js"
-	_ "github.com/ethereum/go-ethereum/eth/tracers/native"
+	_ "github.com/electroneum/electroneum-sc/eth/tracers/js"
+	_ "github.com/electroneum/electroneum-sc/eth/tracers/native"
 
 	"github.com/urfave/cli/v2"
 )
@@ -349,7 +349,6 @@ func geth(ctx *cli.Context) error {
 // it unlocks any requested accounts, and starts the RPC/IPC interfaces and the
 // miner.
 func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isConsole bool) {
-	debug.Memsize.Add("node", stack)
 
 	// Start up the node itself
 	utils.StartNode(ctx, stack, isConsole)
