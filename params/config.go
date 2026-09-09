@@ -359,6 +359,8 @@ func (c *ChainConfig) Description() string {
 	}
 	banner += fmt.Sprintf("Chain ID:  %v (%s)\n", c.ChainID, network)
 	switch {
+	case c.IBFT != nil:
+		banner += "Consensus: IBFT (QBFT proof-of-authority)\n"
 	case c.Ethash != nil:
 		if c.TerminalTotalDifficulty == nil {
 			banner += "Consensus: Ethash (proof-of-work)\n"
@@ -407,6 +409,14 @@ func (c *ChainConfig) Description() string {
 		banner += fmt.Sprintf(" - Gray Glacier:                #%-8v (https://github.com/ethereum/execution-specs/blob/master/network-upgrades/mainnet-upgrades/gray-glacier.md)\n", c.GrayGlacierBlock)
 	}
 	banner += "\n"
+
+	// The merge and post-merge sections describe a transition Electroneum's IBFT
+	// chains will never make. Printing "The Merge is not yet available for this
+	// network!" on one reads like a pending misconfiguration rather than a
+	// permanent property, so leave them out entirely.
+	if c.IBFT != nil {
+		return banner
+	}
 
 	// Add a special section for the merge as it's non-obvious
 	if c.TerminalTotalDifficulty == nil {
