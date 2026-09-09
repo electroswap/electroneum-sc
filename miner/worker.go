@@ -584,6 +584,7 @@ func (w *worker) mainLoop() {
 						Time:      tx.Time(),
 						GasFeeCap: tx.GasFeeCap(),
 						GasTipCap: tx.GasTipCap(),
+						Type:      tx.Type(),
 					})
 				}
 				txset := newTransactionsByPriceAndNonce(w.current.signer, txs, w.current.header.BaseFee)
@@ -835,6 +836,13 @@ func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAn
 	}
 	var coalescedLogs []*types.Log
 
+	// Electroneum: the fee rules look the priority-transactor allowlist up in
+	// statedb, and only core.Process populates it. The miner reaches
+	// core.ApplyTransaction by another route, so without this every priority
+	// transaction fails as "not an authorised transactor" -- silently, since
+	// commitTransactions only logs that at debug level.
+	env.state.SetPriorityTransactors(w.chain.GetPriorityTransactorsForState(env.header, env.state))
+
 	for {
 		// Check interruption signal and abort building if it's fired.
 		if interrupt != nil {
@@ -886,6 +894,13 @@ func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAn
 			coalescedLogs = append(coalescedLogs, logs...)
 			env.tcount++
 			txs.Shift()
+
+			// Mirror the validator's mid-block refresh in state_processor.go, so a
+			// block we build sees an allowlist edit at the same transaction index
+			// that a block we import would.
+			if tx.To() != nil && *tx.To() == w.chainConfig.GetPriorityTransactorsContractAddress(env.header.Number) {
+				env.state.SetPriorityTransactors(w.chain.GetPriorityTransactorsForState(env.header, env.state))
+			}
 
 		default:
 			// Transaction is regarded as invalid, drop all consecutive transactions from

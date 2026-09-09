@@ -37,6 +37,22 @@ type LazyTransaction struct {
 	Time      time.Time // Time when the transaction was first seen
 	GasFeeCap *big.Int  // Maximum fee per gas the transaction may consume
 	GasTipCap *big.Int  // Maximum miner tip per gas the transaction can pay
+	Type      uint8     // Transaction type, so fee rules can be applied without resolving
+}
+
+// HasZeroFee reports whether this is an Electroneum priority transaction holding
+// a gas-price waiver, which carries all-zero fee fields by rule.
+//
+// It mirrors types.Transaction.HasZeroFee, but reads the cached fields rather
+// than the transaction: the miner orders by fee before resolving, so a waiver
+// has to be recognisable from the lazy record alone. PriorityTx.gasPrice()
+// returns GasFeeCap, which is why two fields test what three do there.
+func (ltx *LazyTransaction) HasZeroFee() bool {
+	if ltx.Type != types.PriorityTxType {
+		return false
+	}
+	return ltx.GasFeeCap != nil && ltx.GasFeeCap.Sign() == 0 &&
+		ltx.GasTipCap != nil && ltx.GasTipCap.Sign() == 0
 }
 
 // Resolve retrieves the full transaction belonging to a lazy handle if it is still

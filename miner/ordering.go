@@ -39,6 +39,15 @@ type txWithMinerFee struct {
 func newTxWithMinerFee(tx *txpool.LazyTransaction, from common.Address, baseFee *big.Int) (*txWithMinerFee, error) {
 	tip := new(big.Int).Set(tx.GasTipCap)
 	if baseFee != nil {
+		// A gas-price waiver pays no tip and is exempt from the base-fee floor,
+		// exactly as types.Transaction.EffectiveGasTip treats it. This has to be
+		// repeated here because v1.13 orders transactions from a LazyTransaction
+		// and never calls that method -- and the failure is silent: the sender is
+		// simply dropped from the map by newTransactionsByPriceAndNonce, so the
+		// transaction sits in the pool as pending and is never mined.
+		if tx.HasZeroFee() {
+			return &txWithMinerFee{tx: tx, from: from, fees: new(big.Int)}, nil
+		}
 		if tx.GasFeeCap.Cmp(baseFee) < 0 {
 			return nil, types.ErrGasFeeCapTooLow
 		}

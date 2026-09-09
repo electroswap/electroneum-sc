@@ -387,6 +387,26 @@ func (bc *BlockChain) TrieDB() *trie.Database {
 	return bc.triedb
 }
 
+// GetPriorityTransactorsForState reads Electroneum's priority-transactor
+// allowlist from the given state, resolving the contract address for the given
+// header's block number.
+func (bc *BlockChain) GetPriorityTransactorsForState(header *types.Header, state *state.StateDB) common.PriorityTransactorMap {
+	return bc.GetPriorityTransactorsForStateAt(header, state, header.Number)
+}
+
+// GetPriorityTransactorsForStateAt is GetPriorityTransactorsForState with the
+// contract address resolved for addressBlock rather than for header.Number.
+//
+// A caller building block N+1 holds the state of head block N but must follow
+// N+1's transition schedule, so it passes header.Number+1 here. Resolving the
+// address is pure config arithmetic, which is why this does not fabricate a
+// block context that would perturb NUMBER/TIMESTAMP/BLOCKHASH inside the EVM.
+func (bc *BlockChain) GetPriorityTransactorsForStateAt(header *types.Header, state *state.StateDB, addressBlock *big.Int) common.PriorityTransactorMap {
+	blockContext := NewEVMBlockContext(header, bc, nil)
+	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, state, bc.chainConfig, bc.vmConfig)
+	return GetPriorityTransactorsAt(vmenv, bc.chainConfig.GetPriorityTransactorsContractAddress(addressBlock))
+}
+
 // SubscribeRemovedLogsEvent registers a subscription of RemovedLogsEvent.
 func (bc *BlockChain) SubscribeRemovedLogsEvent(ch chan<- RemovedLogsEvent) event.Subscription {
 	return bc.scope.Track(bc.rmLogsFeed.Subscribe(ch))

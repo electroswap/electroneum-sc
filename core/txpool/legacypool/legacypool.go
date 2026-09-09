@@ -283,6 +283,12 @@ func (pool *LegacyPool) Filter(tx *types.Transaction) bool {
 	switch tx.Type() {
 	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType:
 		return true
+	case types.PriorityTxType:
+		// Electroneum's priority transaction belongs to this pool. Without this
+		// the subpool router finds no taker and rejects it as an unsupported
+		// type before any validation runs -- eth_sendRawTransaction fails and
+		// the transaction never reaches the rules that would have accepted it.
+		return true
 	default:
 		return false
 	}
@@ -552,6 +558,7 @@ func (pool *LegacyPool) Pending(enforceTips bool) map[common.Address][]*txpool.L
 					Time:      txs[i].Time(),
 					GasFeeCap: txs[i].GasFeeCap(),
 					GasTipCap: txs[i].GasTipCap(),
+					Type:      txs[i].Type(),
 				}
 			}
 			pending[addr] = lazies
