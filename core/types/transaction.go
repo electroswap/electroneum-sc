@@ -45,6 +45,9 @@ const (
 	AccessListTxType = 0x01
 	DynamicFeeTxType = 0x02
 	BlobTxType       = 0x03
+
+	// Electroneum transaction types begin at 64; the implementation stops at 128.
+	PriorityTxType = 0x40
 )
 
 // Transaction is an Ethereum transaction.
@@ -53,9 +56,10 @@ type Transaction struct {
 	time  time.Time // Time first seen locally (spam avoidance)
 
 	// caches
-	hash atomic.Value
-	size atomic.Value
-	from atomic.Value
+	hash           atomic.Value
+	size           atomic.Value
+	from           atomic.Value
+	priorityPubkey atomic.Value
 }
 
 // NewTx creates a new transaction.
@@ -348,6 +352,11 @@ func (tx *Transaction) EffectiveGasTip(baseFee *big.Int) (*big.Int, error) {
 	if baseFee == nil {
 		return tx.GasTipCap(), nil
 	}
+	// A priority transaction holding a gas-price waiver carries all-zero fee
+	// fields and pays no tip, so it must not be measured against the base fee.
+	if tx.HasZeroFee() {
+		return common.Big0, nil
+	}
 	var err error
 	gasFeeCap := tx.GasFeeCap()
 	if gasFeeCap.Cmp(baseFee) == -1 {
@@ -508,6 +517,43 @@ func (tx *Transaction) WithSignature(signer Signer, sig []byte) (*Transaction, e
 	cpy := tx.inner.copy()
 	cpy.setSignatureValues(signer.ChainID(), v, r, s)
 	return &Transaction{inner: cpy, time: tx.time}, nil
+}
+
+// WithPrioritySignature returns a new transaction carrying the Electroneum
+// priority signature -- the second signature that proves membership of the
+// on-chain priority-transactor allowlist. The signature must be in
+// [R || S || V] format where V is 0 or 1.
+func (tx *Transaction) WithPrioritySignature(signer Signer, sig []byte) (*Transaction, error) {
+	if tx.Type() != PriorityTxType {
+		return nil, ErrTxTypeNotSupported
+	}
+	r, s, v, err := signer.SignatureValues(tx, sig)
+	if err != nil {
+		return nil, err
+	}
+	cpy := tx.inner.copy().(*PriorityTx)
+	cpy.setPrioritySignatureValues(signer.ChainID(), v, r, s)
+	return &Transaction{inner: cpy, time: tx.time}, nil
+}
+
+// HasZeroFee reports whether this is a priority transaction with a gas-price
+// waiver. Since 2026-06-24 such a transaction must carry all-zero fee fields.
+func (tx *Transaction) HasZeroFee() bool {
+	if tx.Type() != PriorityTxType {
+		return false
+	}
+	return tx.GasPrice().Cmp(common.Big0) == 0 && tx.GasFeeCapIntCmp(common.Big0) == 0 && tx.GasTipCapIntCmp(common.Big0) == 0
+}
+
+// RawPrioritySignatureValues returns the priority signature, or nils for any
+// transaction type that does not carry one.
+func (tx *Transaction) RawPrioritySignatureValues() (v, r, s *big.Int) {
+	switch inner := tx.inner.(type) {
+	case *PriorityTx:
+		return inner.rawPrioritySignatureValues()
+	default:
+		return nil, nil, nil
+	}
 }
 
 // Transactions implements DerivableList for transactions.

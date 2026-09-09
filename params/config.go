@@ -331,7 +331,25 @@ type ChainConfig struct {
 	// Various consensus engines
 	Ethash    *EthashConfig `json:"ethash,omitempty"`
 	Clique    *CliqueConfig `json:"clique,omitempty"`
+	IBFT      *IBFTConfig   `json:"ibft,omitempty"`
 	IsDevMode bool          `json:"isDev,omitempty"`
+
+	// Electroneum-specific consensus parameters. See config_etn.go.
+	//
+	// FutureForkBlock is an unscheduled placeholder (math.MaxInt64 on every live
+	// network) that gates the QBFT ProposerSeal header field and the
+	// priority-signature signer. Its semantics must be preserved exactly: the
+	// day Electroneum sets a real block number, a fork that guessed differently
+	// splits the chain.
+	FutureForkBlock *big.Int `json:"futureForkBlock,omitempty"`
+
+	// GenesisETN is the terminal circulating supply carried over from the legacy
+	// Electroneum chain; it seeds the emission sidecar rather than the state trie.
+	GenesisETN                         *big.Int       `json:"genesisETN,omitempty"`
+	LegacyV9ForkHeight                 *big.Int       `json:"legacyV9ForkHeight,omitempty"`
+	LegacyToSmartchainMigrationHeight  *big.Int       `json:"legacyToSmartchainMigrationHeight,omitempty"`
+	PriorityTransactorsContractAddress common.Address `json:"priorityTransactorsContractAddress,omitempty"`
+	Transitions                        []Transition   `json:"transitions,omitempty"`
 }
 
 // EthashConfig is the consensus engine configs for proof-of-work based sealing.
