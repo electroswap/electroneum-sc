@@ -18,11 +18,13 @@
 package ethconfig
 
 import (
+	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"github.com/electroneum/electroneum-sc/consensus/istanbul"
 	istanbulBackend "github.com/electroneum/electroneum-sc/consensus/istanbul/backend"
 	"github.com/electroneum/electroneum-sc/crypto"
+	"github.com/electroneum/electroneum-sc/log"
 	"time"
 
 	"github.com/electroneum/electroneum-sc/common"
@@ -175,20 +177,32 @@ type Config struct {
 // CreateConsensusEngine creates a consensus engine for the given chain config.
 // Clique is allowed for now to live standalone, but ethash is forbidden and can
 // only exist on already merged networks.
-func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database) (consensus.Engine, error) {
+// CreateConsensusEngine builds the consensus engine for a chain.
+//
+// nodeKey is Electroneum's signing identity. Upstream's signature has no place
+// for it -- geth stopped handing this function a *node.Node -- so it is threaded
+// through explicitly. Callers that can never seal (the chain subcommands, the
+// LES client) pass nil and get a clearly-logged read-only engine.
+func CreateConsensusEngine(config *params.ChainConfig, db ethdb.Database, nodeKey *ecdsa.PrivateKey) (consensus.Engine, error) {
 	// Electroneum runs QBFT, so it takes precedence over every Ethereum engine.
 	if config.IBFT != nil {
-		// The signing key only matters for PROPOSING blocks. This build follows
-		// and verifies the chain but does not seal, so rather than plumb the
-		// node key through a factory that upstream no longer gives a *node.Node,
-		// generate an ephemeral one. Backend.New dereferences the key to derive
-		// its address, so nil is not an option.
+		// The signing key is this node's consensus identity: QBFT binds a
+		// block's coinbase to its proposer, so a wrong key means a wrong
+		// identity rather than a harmless one.
 		//
-		// Restoring the proposer path means passing the real node key here --
-		// see electroswap/PORT-INVENTORY.md, Stage 3d.
-		key, err := crypto.GenerateKey()
-		if err != nil {
-			return nil, fmt.Errorf("istanbul: ephemeral key: %w", err)
+		// Backend.New dereferences the key to derive its address, so nil is not
+		// an option. Where there genuinely is no node key -- the chain
+		// subcommands, which import and export but never seal -- fall back to an
+		// ephemeral one and SAY SO, rather than silently running under a random
+		// identity.
+		key := nodeKey
+		if key == nil {
+			var err error
+			if key, err = crypto.GenerateKey(); err != nil {
+				return nil, fmt.Errorf("istanbul: ephemeral key: %w", err)
+			}
+			log.Warn("IBFT: no node key available, using an ephemeral identity",
+				"consequence", "this engine can verify but must not seal")
 		}
 		return istanbulBackend.New(istanbul.Config{
 			BlockPeriod:              config.IBFT.BlockPeriodSeconds,

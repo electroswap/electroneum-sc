@@ -39,6 +39,7 @@ import (
 	"github.com/electroneum/electroneum-sc/core/txpool/legacypool"
 	"github.com/electroneum/electroneum-sc/core/types"
 	"github.com/electroneum/electroneum-sc/core/vm"
+	"github.com/electroneum/electroneum-sc/crypto"
 	"github.com/electroneum/electroneum-sc/eth/downloader"
 	"github.com/electroneum/electroneum-sc/eth/ethconfig"
 	"github.com/electroneum/electroneum-sc/eth/gasprice"
@@ -144,7 +145,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
-	engine, err := ethconfig.CreateConsensusEngine(chainConfig, chainDb)
+	engine, err := ethconfig.CreateConsensusEngine(chainConfig, chainDb, stack.Config().NodeKey())
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +228,14 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	// Electroneum runs QBFT messages over their own devp2p subprotocol alongside
 	// the eth one, so the node has to advertise both. The engine names it.
+	//
+	// The etherbase is also forced to the node key's address: QBFT binds a
+	// block's coinbase to its proposer, so on this chain the two are the same
+	// identity and a configured --miner.etherbase would be a lie.
 	if chainConfig.IBFT != nil {
+		if key := stack.Config().NodeKey(); key != nil {
+			eth.etherbase = crypto.PubkeyToAddress(key.PublicKey)
+		}
 		if p, ok := eth.engine.(interface{ Protocol() consensus.Protocol }); ok {
 			proto := p.Protocol()
 			ibftConsensusProtocolName = proto.Name
