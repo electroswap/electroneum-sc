@@ -53,18 +53,25 @@ var (
 
 // DefaultConfig contains reasonable default settings.
 var DefaultConfig = Config{
-	DataDir:              DefaultDataDir(),
-	HTTPPort:             DefaultHTTPPort,
-	AuthAddr:             DefaultAuthHost,
-	AuthPort:             DefaultAuthPort,
-	AuthVirtualHosts:     DefaultAuthVhosts,
-	HTTPModules:          []string{"net", "web3"},
-	HTTPVirtualHosts:     []string{"localhost"},
-	HTTPTimeouts:         rpc.DefaultHTTPTimeouts,
-	WSPort:               DefaultWSPort,
-	WSModules:            []string{"net", "web3"},
-	BatchRequestLimit:    1000,
-	BatchResponseMaxSize: 25 * 1000 * 1000,
+	DataDir:          DefaultDataDir(),
+	HTTPPort:         DefaultHTTPPort,
+	AuthAddr:         DefaultAuthHost,
+	AuthPort:         DefaultAuthPort,
+	AuthVirtualHosts: DefaultAuthVhosts,
+	HTTPModules:      []string{"net", "web3"},
+	HTTPVirtualHosts: []string{"localhost"},
+	HTTPTimeouts:     rpc.DefaultHTTPTimeouts,
+	WSPort:           DefaultWSPort,
+	WSModules:        []string{"net", "web3"},
+	// Both caps are new in v1.13 and 0 disables them, which is what the
+	// v1.10.18 binary Electroneum ships effectively did -- it had no batch
+	// limits at all. Keeping upstream's 1000-item / 25MB defaults would newly
+	// reject or truncate batches that work against every other ETN node today,
+	// and ElectroSwap's own indexer batches heavily. Re-enable per node with
+	// --rpc.batch-request-limit / --rpc.batch-response-max-size if a node is
+	// ever exposed publicly.
+	BatchRequestLimit:    0,
+	BatchResponseMaxSize: 0,
 	GraphQLVirtualHosts:  []string{"localhost"},
 	P2P: p2p.Config{
 		ListenAddr: ":30303",

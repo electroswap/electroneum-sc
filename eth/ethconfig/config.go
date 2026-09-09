@@ -65,10 +65,15 @@ var LightClientGPO = gasprice.Config{
 
 // Defaults contains default settings for use on the Ethereum main net.
 var Defaults = Config{
-	SyncMode:           downloader.SnapSync,
-	NetworkId:          52014, // Electroneum mainnet; the eth handshake rejects a mismatch
-	TxLookupLimit:      2350000,
-	TransactionHistory: 2350000,
+	SyncMode:  downloader.SnapSync,
+	NetworkId: 52014, // Electroneum mainnet; the eth handshake rejects a mismatch
+	// Electroneum raised this from go-ethereum's 2350000: both mean "about a
+	// year", but ETN produces a block every 5 seconds rather than every 12.
+	// Inheriting the upstream number silently discards ~4M blocks of
+	// transaction index, so eth_getTransactionByHash and
+	// eth_getTransactionReceipt start returning null for anything older.
+	TxLookupLimit:      6307200,
+	TransactionHistory: 6307200,
 	StateHistory:       params.FullImmutabilityThreshold,
 	StateScheme:        rawdb.HashScheme,
 	LightPeers:         100,
@@ -84,7 +89,11 @@ var Defaults = Config{
 	RPCGasCap:          50000000,
 	RPCEVMTimeout:      5 * time.Second,
 	GPO:                FullNodeGPO,
-	RPCTxFeeCap:        1, // 1 ether
+	// Electroneum's cap, not go-ethereum's 1 ether. The unit is ETN, and ETN is
+	// worth far less than ether, so upstream's cap would reject transactions
+	// the rest of the network accepts -- a 30M-gas call needs only a 33 gwei
+	// fee cap to exceed 1 ETN.
+	RPCTxFeeCap: 100000,
 }
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go
