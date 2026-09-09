@@ -595,8 +595,9 @@ func (pool *LegacyPool) validateTxBasics(tx *types.Transaction, local bool) erro
 			1<<types.LegacyTxType |
 			1<<types.AccessListTxType |
 			1<<types.DynamicFeeTxType,
-		MaxSize: txMaxSize,
-		MinTip:  pool.gasTip.Load(),
+		AcceptPriority: true,
+		MaxSize:        txMaxSize,
+		MinTip:         pool.gasTip.Load(),
 	}
 	if local {
 		opts.MinTip = new(big.Int)

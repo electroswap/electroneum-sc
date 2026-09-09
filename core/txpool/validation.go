@@ -35,7 +35,13 @@ import (
 type ValidationOptions struct {
 	Config *params.ChainConfig // Chain configuration to selectively validate based on current fork rules
 
-	Accept  uint8    // Bitmap of transaction types that should be accepted for the calling pool
+	Accept uint8 // Bitmap of transaction types that should be accepted for the calling pool
+
+	// AcceptPriority allows Electroneum's PriorityTx (type 0x40). It is a
+	// separate flag rather than a bit in Accept because 64 does not fit a uint8
+	// bitmap.
+	AcceptPriority bool
+
 	MaxSize uint64   // Maximum size of a transaction that the caller can meaningfully handle
 	MinTip  *big.Int // Minimum gas tip needed to allow a transaction into the caller pool
 }
@@ -47,8 +53,17 @@ type ValidationOptions struct {
 // This check is public to allow different transaction pools to check the basic
 // rules without duplicating code and running the risk of missed updates.
 func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types.Signer, opts *ValidationOptions) error {
-	// Ensure transactions not implemented by the calling pool are rejected
-	if opts.Accept&(1<<tx.Type()) == 0 {
+	// Ensure transactions not implemented by the calling pool are rejected.
+	//
+	// Electroneum's PriorityTx is type 0x40 (64), which this bitmap cannot
+	// express: Accept is a uint8, so 1<<64 is 0 and the type would always be
+	// rejected. Upstream's scheme assumes tx types stay in 0..7. Priority
+	// transactions are therefore gated by AcceptPriority instead of a bit.
+	if tx.Type() == types.PriorityTxType {
+		if !opts.AcceptPriority {
+			return fmt.Errorf("%w: tx type %v not supported by this pool", core.ErrTxTypeNotSupported, tx.Type())
+		}
+	} else if opts.Accept&(1<<tx.Type()) == 0 {
 		return fmt.Errorf("%w: tx type %v not supported by this pool", core.ErrTxTypeNotSupported, tx.Type())
 	}
 	// Before performing any expensive validations, sanity check that the tx is
@@ -104,8 +119,14 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		return fmt.Errorf("%w: needed %v, allowed %v", core.ErrIntrinsicGas, intrGas, tx.Gas())
 	}
 	// Ensure the gasprice is high enough to cover the requirement of the calling
-	// pool and/or block producer
-	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
+	// pool and/or block producer.
+	//
+	// A priority transaction holding a gas-price waiver pays nothing by design,
+	// so the pool's tip floor must not exclude it -- otherwise ~3.5% of mainnet
+	// traffic could never enter the pool and would never be propagated. Whether
+	// the waiver is genuine is settled during execution, against the on-chain
+	// allowlist the pool cannot see here.
+	if !tx.HasZeroFee() && tx.GasTipCapIntCmp(opts.MinTip) < 0 {
 		return fmt.Errorf("%w: tip needed %v, tip permitted %v", ErrUnderpriced, opts.MinTip, tx.GasTipCap())
 	}
 	// Ensure blob transactions have valid commitments
