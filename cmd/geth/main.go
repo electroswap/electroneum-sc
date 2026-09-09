@@ -49,7 +49,7 @@ import (
 )
 
 const (
-	clientIdentifier = "geth" // Client identifier to advertise over the network
+	clientIdentifier = "etn-sc" // Client identifier to advertise over the network
 )
 
 var (
