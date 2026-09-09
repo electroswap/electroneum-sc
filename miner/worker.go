@@ -480,6 +480,17 @@ func (w *worker) newWorkLoop(recommit time.Duration) {
 			commit(commitInterruptNewHead)
 
 		case head := <-w.chainHeadCh:
+			// Electroneum: tell the consensus core a block was committed, so it
+			// advances its sequence. Without this the core stays at sequence N
+			// in state Committed, the miner's next proposal for N+1 is rejected
+			// as a "future message", and the chain only limps forward on the
+			// round-change timeout -- 30s a block instead of the configured
+			// block period.
+			if h, ok := w.engine.(consensus.Handler); ok {
+				if err := h.NewChainHead(); err != nil {
+					log.Debug("IBFT: NewChainHead", "err", err)
+				}
+			}
 			clearPending(head.Block.NumberU64())
 			timestamp = time.Now().Unix()
 			commit(commitInterruptNewHead)
