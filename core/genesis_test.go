@@ -34,7 +34,12 @@ import (
 )
 
 func TestInvalidCliqueConfig(t *testing.T) {
-	block := DefaultGoerliGenesisBlock()
+	block := DefaultTestnetGenesisBlock()
+	block.Config.IBFT = &params.IBFTConfig{}
+	block.Config.Clique = &params.CliqueConfig{
+		Period: 15,
+		Epoch:  30000,
+	}
 	block.ExtraData = []byte{}
 	db := rawdb.NewMemoryDatabase()
 	if _, err := block.Commit(db, trie.NewDatabase(db, nil)); err == nil {
@@ -103,15 +108,15 @@ func testSetupGenesis(t *testing.T, scheme string) {
 			wantConfig: customg.Config,
 		},
 		{
-			name: "custom block in DB, genesis == goerli",
+			name: "custom block in DB, genesis == testnet",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
 				tdb := trie.NewDatabase(db, newDbConfig(scheme))
 				customg.Commit(db, tdb)
-				return SetupGenesisBlock(db, tdb, DefaultGoerliGenesisBlock())
+				return SetupGenesisBlock(db, tdb, DefaultTestnetGenesisBlock())
 			},
-			wantErr:    &GenesisMismatchError{Stored: customghash, New: params.GoerliGenesisHash},
-			wantHash:   params.GoerliGenesisHash,
-			wantConfig: params.GoerliChainConfig,
+			wantErr:    &GenesisMismatchError{Stored: customghash, New: params.TestnetGenesisHash},
+			wantHash:   params.TestnetGenesisHash,
+			wantConfig: params.TestnetChainConfig,
 		},
 		{
 			name: "compatible config in DB",
@@ -174,6 +179,39 @@ func testSetupGenesis(t *testing.T, scheme string) {
 	}
 }
 
+// TestStagenetGenesisHashIsUpstreamInconsistent pins a discrepancy inherited
+// from Electroneum, deliberately kept out of TestGenesisHashes above.
+//
+// params.StagenetGenesisHash does not match the block that
+// DefaultStagenetGenesisBlock() actually produces. Both the genesis definition
+// and params.StagenetChainConfig in this tree are byte-identical to upstream
+// electroneum-sc, and mainnet and testnet hash correctly through the same code,
+// so the mismatch is upstream's -- their own TestGenesisHashes covers only
+// mainnet and testnet, so it was never caught.
+//
+// We do not "fix" it: changing the genesis or the constant is a guess about
+// which side stagenet was really launched with, and guessing wrong breaks
+// stagenet interop for no gain on a network we do not run. Instead this records
+// the values so that a future upstream merge which corrects either side fails
+// here and asks us to look, rather than passing silently.
+func TestStagenetGenesisHashIsUpstreamInconsistent(t *testing.T) {
+	const observed = "0x34aa30eea5261577cf5abddd6c7e14791847c980092c93419ce35e1637043fb9"
+
+	db := rawdb.NewMemoryDatabase()
+	have := DefaultStagenetGenesisBlock().MustCommit(db, trie.NewDatabase(db, trie.HashDefaults)).Hash()
+
+	if have != common.HexToHash(observed) {
+		t.Fatalf("stagenet genesis hash changed: have %s, previously %s.\n"+
+			"If this came from an upstream merge, check whether Electroneum corrected the\n"+
+			"genesis definition, and if so compare it against params.StagenetGenesisHash.", have.Hex(), observed)
+	}
+	if have == params.StagenetGenesisHash {
+		t.Fatalf("params.StagenetGenesisHash now agrees with DefaultStagenetGenesisBlock() (%s);\n"+
+			"the upstream inconsistency is resolved -- add stagenet back to TestGenesisHashes\n"+
+			"and delete this test.", have.Hex())
+	}
+}
+
 // TestGenesisHashes checks the congruity of default genesis data to
 // corresponding hardcoded genesis hash values.
 func TestGenesisHashes(t *testing.T) {
@@ -182,8 +220,7 @@ func TestGenesisHashes(t *testing.T) {
 		want    common.Hash
 	}{
 		{DefaultGenesisBlock(), params.MainnetGenesisHash},
-		{DefaultGoerliGenesisBlock(), params.GoerliGenesisHash},
-		{DefaultSepoliaGenesisBlock(), params.SepoliaGenesisHash},
+		{DefaultTestnetGenesisBlock(), params.TestnetGenesisHash},
 	} {
 		// Test via MustCommit
 		db := rawdb.NewMemoryDatabase()
