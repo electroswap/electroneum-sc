@@ -104,6 +104,13 @@ func Send(w MsgWriter, msgcode uint64, data interface{}) error {
 	return w.WriteMsg(Msg{Code: msgcode, Size: uint32(size), Payload: r})
 }
 
+// SendWithNoEncoding writes an already RLP-encoded message with the given code.
+// QBFT signs over the encoded payload, so re-encoding it here would change the
+// bytes the signature covers.
+func SendWithNoEncoding(w MsgWriter, msgcode uint64, payload []byte) error {
+	return w.WriteMsg(Msg{Code: msgcode, Size: uint32(len(payload)), Payload: bytes.NewReader(payload)})
+}
+
 // SendItems writes an RLP with the given code and data elements.
 // For a call such as:
 //

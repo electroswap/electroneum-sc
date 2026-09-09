@@ -106,6 +106,7 @@ type handler struct {
 	database ethdb.Database
 	txpool   txPool
 	chain    *core.BlockChain
+	engine   consensus.Engine // Electroneum: the IBFT subprotocol needs to reach the engine
 	maxPeers int
 
 	downloader   *downloader.Downloader

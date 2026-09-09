@@ -90,6 +90,41 @@ type Peer struct {
 
 	term chan struct{} // Termination channel to stop the broadcasters
 	lock sync.RWMutex  // Mutex protecting the internal fields
+
+	// consensusRw is the read/writer for Electroneum's IBFT consensus
+	// subprotocol ("etn-istanbul/100"), which rides alongside the eth protocol
+	// on the same peer.
+	consensusRw p2p.MsgReadWriter
+}
+
+// SendConsensus sends a message over the IBFT consensus subprotocol.
+func (p *Peer) SendConsensus(msgcode uint64, data interface{}) error {
+	if p.consensusRw == nil {
+		return nil
+	}
+	return p2p.Send(p.consensusRw, msgcode, data)
+}
+
+// SendQBFTConsensus sends a consensus message whose payload is already encoded.
+func (p *Peer) SendQBFTConsensus(msgcode uint64, payload []byte) error {
+	if p.consensusRw == nil {
+		return nil
+	}
+	return p2p.SendWithNoEncoding(p.consensusRw, msgcode, payload)
+}
+
+// Send satisfies consensus.Peer. The IBFT engine only ever uses the two
+// consensus-specific senders above; this exists so *Peer implements the
+// interface.
+func (p *Peer) Send(msgcode uint64, data interface{}) error {
+	return p2p.Send(p.rw, msgcode, data)
+}
+
+// AddConsensusProtoRW attaches the IBFT consensus subprotocol's read/writer to
+// this peer.
+func (p *Peer) AddConsensusProtoRW(rw p2p.MsgReadWriter) *Peer {
+	p.consensusRw = rw
+	return p
 }
 
 // NewPeer create a wrapper for a network connection and negotiated  protocol

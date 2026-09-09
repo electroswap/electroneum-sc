@@ -118,6 +118,12 @@ type Peer struct {
 	// events receives message send / receive events if set
 	events   *event.Feed
 	testPipe *MsgPipeRW // for testing
+
+	// The IBFT consensus subprotocol starts before the eth subprotocol has
+	// necessarily registered its peer. These let it wait for registration
+	// rather than racing it, and learn if the peer went away instead.
+	EthPeerRegistered   chan struct{}
+	EthPeerDisconnected chan struct{}
 }
 
 // NewPeer returns a peer for testing purposes.
@@ -236,6 +242,9 @@ func newPeer(log log.Logger, conn *conn, protocols []Protocol) *Peer {
 		closed:   make(chan struct{}),
 		pingRecv: make(chan struct{}, 16),
 		log:      log.New("id", conn.node.ID(), "conn", conn.flags),
+
+		EthPeerRegistered:   make(chan struct{}, 1),
+		EthPeerDisconnected: make(chan struct{}, 1),
 	}
 	return p
 }
@@ -245,6 +254,15 @@ func (p *Peer) Log() log.Logger {
 }
 
 func (p *Peer) run() (remoteRequested bool, err error) {
+	// If the IBFT subprotocol is waiting for this peer's eth registration,
+	// make sure it learns the peer went away instead of blocking forever.
+	defer func() {
+		select {
+		case p.EthPeerDisconnected <- struct{}{}:
+		default:
+		}
+	}()
+
 	var (
 		writeStart = make(chan struct{}, 1)
 		writeErr   = make(chan error, 1)
