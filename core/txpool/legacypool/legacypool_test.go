@@ -65,6 +65,15 @@ type testBlockChain struct {
 	gasLimit      atomic.Uint64
 	statedb       *state.StateDB
 	chainHeadFeed *event.Feed
+
+	// priorityTransactors is the allowlist handed to the pool. nil (the default)
+	// models a chain with no transactor contract, which leaves the pool's
+	// priority admission checks inert.
+	priorityTransactors common.PriorityTransactorMap
+
+	// priorityAddressBlock records the block number the pool asked the allowlist
+	// to be resolved for, so a test can assert it follows head+1.
+	priorityAddressBlock *big.Int
 }
 
 func newTestBlockChain(config *params.ChainConfig, gasLimit uint64, statedb *state.StateDB, chainHeadFeed *event.Feed) *testBlockChain {
@@ -90,6 +99,16 @@ func (bc *testBlockChain) GetBlock(hash common.Hash, number uint64) *types.Block
 
 func (bc *testBlockChain) StateAt(common.Hash) (*state.StateDB, error) {
 	return bc.statedb, nil
+}
+
+// GetPriorityTransactorsForStateAt satisfies legacypool.BlockChain. It records
+// the block the address was resolved for and hands back whatever allowlist the
+// test installed; nil models a chain with no transactor contract.
+func (bc *testBlockChain) GetPriorityTransactorsForStateAt(header *types.Header, statedb *state.StateDB, addressBlock *big.Int) common.PriorityTransactorMap {
+	if addressBlock != nil {
+		bc.priorityAddressBlock = new(big.Int).Set(addressBlock)
+	}
+	return bc.priorityTransactors
 }
 
 func (bc *testBlockChain) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {

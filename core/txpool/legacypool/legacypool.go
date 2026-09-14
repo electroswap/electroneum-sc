@@ -19,6 +19,7 @@ package legacypool
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"sort"
@@ -61,6 +62,20 @@ var (
 	// ErrTxPoolOverflow is returned if the transaction pool is full and can't accept
 	// another remote transaction.
 	ErrTxPoolOverflow = errors.New("txpool is full")
+
+	// errBadPrioritySignature is returned when a priority transaction's second
+	// signature does not recover to a public key.
+	errBadPrioritySignature = errors.New("invalid priority signature")
+
+	// errBadPriorityKey is returned when a priority transaction's recovered key
+	// is not in the transactor allowlist. Mirrors core.errBadPriorityKey, which
+	// is the execution-layer rule this admission check anticipates.
+	errBadPriorityKey = errors.New("priority public key is not an authorised transactor")
+
+	// errNoGasPriceWaiver is returned when a priority transaction's fee fields
+	// are inconsistent with its sender's waiver status. Mirrors
+	// core.errNoGasPriceWaiver.
+	errNoGasPriceWaiver = errors.New("priority transaction fee fields inconsistent with its waiver status")
 )
 
 var (
@@ -120,6 +135,13 @@ type BlockChain interface {
 
 	// StateAt returns a state database for a given root hash (generally the head).
 	StateAt(root common.Hash) (*state.StateDB, error)
+
+	// GetPriorityTransactorsForStateAt reads Electroneum's priority-transactor
+	// allowlist from the given header's state, resolving the transactor contract
+	// address for addressBlock. The pool holds the state of head block N but
+	// admits transactions destined for N+1, so it passes N+1 and gets the same
+	// transition schedule as the block those transactions will land in.
+	GetPriorityTransactorsForStateAt(header *types.Header, statedb *state.StateDB, addressBlock *big.Int) common.PriorityTransactorMap
 }
 
 // Config are the configuration parameters of the transaction pool.
@@ -215,6 +237,13 @@ type LegacyPool struct {
 	currentHead   atomic.Pointer[types.Header] // Current head of the blockchain
 	currentState  *state.StateDB               // Current state in the blockchain head
 	pendingNonces *noncer                      // Pending state tracking virtual nonces
+
+	// currentPriorityTransactors is the priority-transactor allowlist as it will
+	// apply to the next block. Refreshed on every reset; consulted at admission
+	// so an unauthorised priority transaction is refused at
+	// eth_sendRawTransaction instead of being accepted and then silently dropped
+	// by the miner.
+	currentPriorityTransactors common.PriorityTransactorMap
 
 	locals  *accountSet // Set of local transaction to exempt from eviction rules
 	journal *journal    // Journal of local transaction to back up to disk
@@ -318,6 +347,7 @@ func (pool *LegacyPool) Init(gasTip *big.Int, head *types.Header, reserve txpool
 	pool.currentHead.Store(head)
 	pool.currentState = statedb
 	pool.pendingNonces = newNoncer(statedb)
+	pool.refreshPriorityTransactors()
 
 	// Start the reorg loop early, so it can handle requests generated during
 	// journal loading.
@@ -595,6 +625,79 @@ func (pool *LegacyPool) local() map[common.Address]types.Transactions {
 // rules, but does not check state-dependent validation such as sufficient balance.
 // This check is meant as an early check which only needs to be performed once,
 // and does not require the pool mutex to be held.
+// prioritySigner returns the signer to use when recovering the priority public
+// key of a priority transaction. Once the future fork is active it returns the
+// sender-bound futureForkSigner, keeping every priority-signature recovery site
+// on the same fork schedule as the consensus path (types.MakeSigner).
+//
+// The schedule is evaluated for the block being built (head+1), not head, for
+// the same reason refreshPriorityTransactors resolves the allowlist there: a
+// transaction admitted now is destined for the next block.
+func (pool *LegacyPool) prioritySigner() types.Signer {
+	head := pool.currentHead.Load()
+	if head == nil {
+		return pool.signer
+	}
+	next := new(big.Int).Add(head.Number, big.NewInt(1))
+	if pool.chainconfig.IsFutureFork(next) {
+		return types.NewFutureForkSigner(pool.chainconfig.ChainID)
+	}
+	return pool.signer
+}
+
+// refreshPriorityTransactors reloads the transactor allowlist from the current
+// head state, resolving the contract address for the next block. Called wherever
+// currentHead and currentState are set.
+func (pool *LegacyPool) refreshPriorityTransactors() {
+	head := pool.currentHead.Load()
+	if head == nil || pool.currentState == nil {
+		pool.currentPriorityTransactors = nil
+		return
+	}
+	next := new(big.Int).Add(head.Number, big.NewInt(1))
+	pool.currentPriorityTransactors = pool.chain.GetPriorityTransactorsForStateAt(head, pool.currentState, next)
+}
+
+// validatePriorityTx applies Electroneum's priority-transactor admission rules:
+// the second signature must recover, the recovered key must be authorised, and
+// the fee fields must match the sender's waiver status. It anticipates
+// core.validatePriorityGasFields so a transaction execution would always reject
+// is refused at submission rather than sitting in the pool forever.
+//
+// A nil allowlist means the transactor contract could not be read at all (no
+// contract deployed yet, or an unreadable state). Enforcing membership against
+// an empty map would reject every priority transaction on such a chain, so
+// admission falls back to the port's earlier behaviour and leaves the decision
+// to execution.
+func (pool *LegacyPool) validatePriorityTx(tx *types.Transaction) error {
+	if tx.Type() != types.PriorityTxType {
+		return nil
+	}
+	priorityPubkey, err := types.PrioritySender(pool.prioritySigner(), tx)
+	if err != nil {
+		return errBadPrioritySignature
+	}
+	if pool.currentPriorityTransactors == nil {
+		return nil
+	}
+	transactor, exists := pool.currentPriorityTransactors[priorityPubkey]
+	if !exists {
+		return fmt.Errorf("%w: %v", errBadPriorityKey, priorityPubkey)
+	}
+	if transactor.IsGasPriceWaiver {
+		// A waiver sender pays nothing, so both fee fields must be zero.
+		if !tx.HasZeroFee() {
+			return fmt.Errorf("%w: waiver priority tx must have zero fee fields", errNoGasPriceWaiver)
+		}
+		return nil
+	}
+	// Without a waiver the sender must actually pay.
+	if tx.HasZeroFee() {
+		return fmt.Errorf("%w: non-waiver priority tx must have feeCap > 0", errNoGasPriceWaiver)
+	}
+	return nil
+}
+
 func (pool *LegacyPool) validateTxBasics(tx *types.Transaction, local bool) error {
 	opts := &txpool.ValidationOptions{
 		Config: pool.chainconfig,
@@ -618,6 +721,9 @@ func (pool *LegacyPool) validateTxBasics(tx *types.Transaction, local bool) erro
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *LegacyPool) validateTx(tx *types.Transaction, local bool) error {
+	if err := pool.validatePriorityTx(tx); err != nil {
+		return err
+	}
 	opts := &txpool.ValidationOptionsWithState{
 		State: pool.currentState,
 
@@ -1420,11 +1526,40 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 	pool.currentHead.Store(newHead)
 	pool.currentState = statedb
 	pool.pendingNonces = newNoncer(statedb)
+	pool.refreshPriorityTransactors()
 
 	// Inject any transactions discarded due to reorgs
 	log.Debug("Reinjecting stale transactions", "count", len(reinject))
 	core.SenderCacher.Recover(pool.signer, reinject)
 	pool.addTxsLocked(reinject, false)
+}
+
+// expiredPriorityHashes returns the hashes of priority transactions in list
+// whose recovered key is no longer in the transactor allowlist. Locally
+// submitted transactions are exempt, matching the rest of the pool's treatment
+// of locals. Returns nil when the allowlist could not be read at all, so a chain
+// with no transactor contract never evicts.
+func (pool *LegacyPool) expiredPriorityHashes(list *list) []common.Hash {
+	if pool.currentPriorityTransactors == nil {
+		return nil
+	}
+	var expired []common.Hash
+	for _, tx := range list.Flatten() {
+		if tx.Type() != types.PriorityTxType || pool.locals.containsTx(tx) {
+			continue
+		}
+		// Already validated on the way in, so a recovery failure here can only
+		// mean the key is unusable; treat it as unauthorised either way.
+		priorityPubkey, err := types.PrioritySender(pool.prioritySigner(), tx)
+		if err != nil {
+			expired = append(expired, tx.Hash())
+			continue
+		}
+		if _, ok := pool.currentPriorityTransactors[priorityPubkey]; !ok {
+			expired = append(expired, tx.Hash())
+		}
+	}
+	return expired
 }
 
 // promoteExecutables moves transactions that have become processable from the
@@ -1440,6 +1575,21 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 		list := pool.queue[addr]
 		if list == nil {
 			continue // Just in case someone calls with a non existing account
+		}
+		// Kick queued priority transactions whose key is no longer authorised
+		// (expired or revoked). Collect first, then route each through removeTx so
+		// the queued list, lookup, gauges and nonces stay consistent. Removing only
+		// from pool.all would leave the transaction in the queued list, where
+		// list.Ready below would still promote and broadcast it even though the
+		// global lookup no longer knows about it.
+		if expired := pool.expiredPriorityHashes(list); len(expired) > 0 {
+			for _, hash := range expired {
+				pool.removeTx(hash, false, true)
+			}
+			// removeTx may have emptied and deleted the queue entry.
+			if list = pool.queue[addr]; list == nil {
+				continue
+			}
 		}
 		// Drop all transactions that are deemed too old (low nonce)
 		forwards := list.Forward(pool.currentState.GetNonce(addr))
@@ -1642,6 +1792,22 @@ func (pool *LegacyPool) demoteUnexecutables() {
 	for addr, list := range pool.pending {
 		nonce := pool.currentState.GetNonce(addr)
 
+		// Kick pending priority transactions whose key is no longer authorised.
+		// The odds of a revoked key being reinstated within the life of these
+		// transactions are negligible, and leaving them pending wastes an account
+		// slot another priority sender could use. Route each through removeTx:
+		// removing only from pool.all would strand the transaction in the pending
+		// list with no eviction path able to reclaim it, since removeTx no-ops once
+		// the lookup entry is gone.
+		if expired := pool.expiredPriorityHashes(list); len(expired) > 0 {
+			for _, hash := range expired {
+				pool.removeTx(hash, false, true)
+			}
+			// removeTx may have emptied and deleted the pending entry.
+			if list = pool.pending[addr]; list == nil {
+				continue
+			}
+		}
 		// Drop all transactions that are deemed too old (low nonce)
 		olds := list.Forward(nonce)
 		for _, tx := range olds {

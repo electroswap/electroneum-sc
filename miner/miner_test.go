@@ -90,6 +90,14 @@ func (bc *testBlockChain) StateAt(common.Hash) (*state.StateDB, error) {
 	return bc.statedb, nil
 }
 
+// GetPriorityTransactorsForStateAt satisfies legacypool.BlockChain. The test
+// chain has no transactor contract, so it returns nil, which leaves the pool's
+// priority admission checks inert - the same behaviour as a chain where the
+// contract is not deployed.
+func (bc *testBlockChain) GetPriorityTransactorsForStateAt(header *types.Header, statedb *state.StateDB, addressBlock *big.Int) common.PriorityTransactorMap {
+	return nil
+}
+
 func (bc *testBlockChain) HasState(root common.Hash) bool {
 	return bc.root == root
 }
