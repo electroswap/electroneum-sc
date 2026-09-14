@@ -154,19 +154,20 @@ func TestPriorityAdmissionNonWaiverMustPay(t *testing.T) {
 	}
 }
 
-// TestPriorityAdmissionInertWithoutAllowlist guards the fallback: a chain with no
-// transactor contract yields a nil allowlist, and admission must not then reject
-// every priority transaction. Enforcing membership against an empty map would
-// make the pool refuse all priority traffic on such a chain.
-func TestPriorityAdmissionInertWithoutAllowlist(t *testing.T) {
+// TestPriorityAdmissionRejectsWhenAllowlistEmpty pins the deny-by-default rule.
+// core.GetPriorityTransactorsAt returns an empty map on every failure path - no
+// contract configured, contract not deployed, ABI or call failure - specifically
+// so that losing the transactor list withdraws privileges rather than granting
+// them. Admission has to agree: an empty list authorises nobody.
+func TestPriorityAdmissionRejectsWhenAllowlistEmpty(t *testing.T) {
 	t.Parallel()
 
 	stranger, _ := crypto.GenerateKey()
-	pool, key, _ := setupPriorityPool(t, nil)
+	pool, key, _ := setupPriorityPool(t, common.PriorityTransactorMap{})
 
 	tx := newPriorityTx(t, 0, big.NewInt(1_000_000_000), big.NewInt(1), key, stranger)
-	if err := pool.addRemoteSync(tx); err != nil {
-		t.Fatalf("priority tx should be accepted when no allowlist is readable, got %v", err)
+	if err := pool.addRemoteSync(tx); !errors.Is(err, errBadPriorityKey) {
+		t.Fatalf("expected errBadPriorityKey with an empty allowlist, got %v", err)
 	}
 }
 

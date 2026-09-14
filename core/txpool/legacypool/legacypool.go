@@ -664,11 +664,12 @@ func (pool *LegacyPool) refreshPriorityTransactors() {
 // core.validatePriorityGasFields so a transaction execution would always reject
 // is refused at submission rather than sitting in the pool forever.
 //
-// A nil allowlist means the transactor contract could not be read at all (no
-// contract deployed yet, or an unreadable state). Enforcing membership against
-// an empty map would reject every priority transaction on such a chain, so
-// admission falls back to the port's earlier behaviour and leaves the decision
-// to execution.
+// An empty allowlist rejects every priority transaction, which is deliberate and
+// matches upstream: core.GetPriorityTransactorsAt returns an empty map on every
+// failure path - no contract configured, contract not deployed, ABI or call
+// failure - precisely so that losing the list denies privileges rather than
+// granting them. It never returns nil, so there is no separate unreadable case
+// to fall back on.
 func (pool *LegacyPool) validatePriorityTx(tx *types.Transaction) error {
 	if tx.Type() != types.PriorityTxType {
 		return nil
@@ -676,9 +677,6 @@ func (pool *LegacyPool) validatePriorityTx(tx *types.Transaction) error {
 	priorityPubkey, err := types.PrioritySender(pool.prioritySigner(), tx)
 	if err != nil {
 		return errBadPrioritySignature
-	}
-	if pool.currentPriorityTransactors == nil {
-		return nil
 	}
 	transactor, exists := pool.currentPriorityTransactors[priorityPubkey]
 	if !exists {
@@ -1537,12 +1535,13 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 // expiredPriorityHashes returns the hashes of priority transactions in list
 // whose recovered key is no longer in the transactor allowlist. Locally
 // submitted transactions are exempt, matching the rest of the pool's treatment
-// of locals. Returns nil when the allowlist could not be read at all, so a chain
-// with no transactor contract never evicts.
+// of locals.
+//
+// As in validatePriorityTx, an empty allowlist evicts everything rather than
+// evicting nothing: upstream treats an unreadable transactor list as "no one is
+// authorised", and the eviction side has to agree with the admission side or a
+// transaction refused at submission could still sit in the pool.
 func (pool *LegacyPool) expiredPriorityHashes(list *list) []common.Hash {
-	if pool.currentPriorityTransactors == nil {
-		return nil
-	}
 	var expired []common.Hash
 	for _, tx := range list.Flatten() {
 		if tx.Type() != types.PriorityTxType || pool.locals.containsTx(tx) {
