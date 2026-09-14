@@ -19,6 +19,7 @@ package filters
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 
 	"github.com/electroneum/electroneum-sc/common"
@@ -155,6 +156,12 @@ func (f *Filter) Logs(ctx context.Context) ([]*types.Log, error) {
 	}
 	if f.end, err = resolveSpecial(f.end); err != nil {
 		return nil, err
+	}
+	// Enforce the block-range cap once the special markers (latest, safe,
+	// finalized) have resolved to concrete numbers - before then the span is not
+	// known. 0 disables the cap.
+	if limit := f.sys.cfg.RangeLimit; limit != 0 && f.end >= f.begin && uint64(f.end-f.begin) > limit {
+		return nil, fmt.Errorf("%w: %d blocks requested, limit is %d", ErrExceedRangeLimit, f.end-f.begin, limit)
 	}
 
 	logChan, errChan := f.rangeLogsAsync(ctx)

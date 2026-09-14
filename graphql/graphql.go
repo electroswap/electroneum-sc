@@ -1142,6 +1142,9 @@ func (b *Block) Logs(ctx context.Context, args struct{ Filter BlockFilterCriteri
 	if err != nil {
 		return nil, err
 	}
+	if err := b.r.filterSystem.CheckLogQueryLimit(addresses, topics); err != nil {
+		return nil, err
+	}
 	filter := b.r.filterSystem.NewBlockFilter(hash, addresses, topics)
 
 	// Run the filter and return all the logs
@@ -1425,6 +1428,9 @@ func (r *Resolver) Logs(ctx context.Context, args struct{ Filter FilterCriteria 
 		topics = *args.Filter.Topics
 	}
 	// Construct the range filter
+	if err := r.filterSystem.CheckLogQueryLimit(addresses, topics); err != nil {
+		return nil, err
+	}
 	filter := r.filterSystem.NewRangeFilter(begin, end, addresses, topics)
 	return runFilter(ctx, r, filter)
 }

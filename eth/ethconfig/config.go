@@ -93,7 +93,9 @@ var Defaults = Config{
 	// worth far less than ether, so upstream's cap would reject transactions
 	// the rest of the network accepts -- a 30M-gas call needs only a 33 gwei
 	// fee cap to exceed 1 ETN.
-	RPCTxFeeCap: 100000,
+	RPCTxFeeCap:      100000,
+	RPCLogQueryLimit: 1000,
+	RangeLimit:       0, // disabled by default, matching upstream go-ethereum
 }
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go
@@ -171,6 +173,17 @@ type Config struct {
 
 	// RPCEVMTimeout is the global timeout for eth-call.
 	RPCEVMTimeout time.Duration
+
+	// RPCLogQueryLimit caps how many addresses, or topics at a single position,
+	// an eth_getLogs / eth_newFilter / logs-subscription filter may name. Each
+	// entry becomes a bloom clause evaluated on every block in the range, so an
+	// unbounded list lets one unauthenticated request monopolise an RPC worker.
+	// 0 disables the cap.
+	RPCLogQueryLimit int
+
+	// RangeLimit caps the block span a single range log query may cover.
+	// 0 disables the cap, matching upstream go-ethereum.
+	RangeLimit uint64
 
 	// RPCTxFeeCap is the global transaction fee(price * gaslimit) cap for
 	// send-transaction variants. The unit is ether.

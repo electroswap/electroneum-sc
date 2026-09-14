@@ -248,6 +248,9 @@ func (api *FilterAPI) NewHeads(ctx context.Context) (*rpc.Subscription, error) {
 
 // Logs creates a subscription that fires for all new log that match the given filter criteria.
 func (api *FilterAPI) Logs(ctx context.Context, crit FilterCriteria) (*rpc.Subscription, error) {
+	if err := api.sys.CheckLogQueryLimit(crit.Addresses, crit.Topics); err != nil {
+		return nil, err
+	}
 	notifier, supported := rpc.NotifierFromContext(ctx)
 	if !supported {
 		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
@@ -300,6 +303,9 @@ type FilterCriteria ethereum.FilterQuery
 //
 // In case "fromBlock" > "toBlock" an error is returned.
 func (api *FilterAPI) NewFilter(crit FilterCriteria) (rpc.ID, error) {
+	if err := api.sys.CheckLogQueryLimit(crit.Addresses, crit.Topics); err != nil {
+		return "", err
+	}
 	logs := make(chan []*types.Log)
 	logsSub, err := api.events.SubscribeLogs(ethereum.FilterQuery(crit), logs)
 	if err != nil {
@@ -333,6 +339,9 @@ func (api *FilterAPI) NewFilter(crit FilterCriteria) (rpc.ID, error) {
 
 // GetLogs returns logs matching the given argument that are stored within the state.
 func (api *FilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([]*types.Log, error) {
+	if err := api.sys.CheckLogQueryLimit(crit.Addresses, crit.Topics); err != nil {
+		return nil, err
+	}
 	var filter *Filter
 	if crit.BlockHash != nil {
 		// Block filter requested, construct a single-shot filter

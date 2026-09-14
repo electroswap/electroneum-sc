@@ -44,6 +44,16 @@ import (
 type Config struct {
 	LogCacheSize int           // maximum number of cached blocks (default: 32)
 	Timeout      time.Duration // how long filters stay active (default: 5min)
+
+	// LogQueryLimit caps how many addresses, or topics at a single position, a
+	// log filter may name. Each entry becomes a bloom-filter clause evaluated on
+	// every block in the range, so an unbounded list lets one unauthenticated
+	// request monopolise an RPC worker. 0 disables the cap.
+	LogQueryLimit int
+
+	// RangeLimit caps the block span (end - begin) a single range log query may
+	// cover. 0 disables the cap, matching upstream go-ethereum.
+	RangeLimit uint64
 }
 
 func (cfg Config) withDefaults() Config {

@@ -54,6 +54,8 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		RPCGasCap               uint64
 		RPCEVMTimeout           time.Duration
 		RPCTxFeeCap             float64
+		RPCLogQueryLimit        int
+		RangeLimit              uint64
 		OverrideCancun          *uint64 `toml:",omitempty"`
 		OverrideVerkle          *uint64 `toml:",omitempty"`
 	}
@@ -95,6 +97,8 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.RPCGasCap = c.RPCGasCap
 	enc.RPCEVMTimeout = c.RPCEVMTimeout
 	enc.RPCTxFeeCap = c.RPCTxFeeCap
+	enc.RPCLogQueryLimit = c.RPCLogQueryLimit
+	enc.RangeLimit = c.RangeLimit
 	enc.OverrideCancun = c.OverrideCancun
 	enc.OverrideVerkle = c.OverrideVerkle
 	return &enc, nil
@@ -140,6 +144,8 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		RPCGasCap               *uint64
 		RPCEVMTimeout           *time.Duration
 		RPCTxFeeCap             *float64
+		RPCLogQueryLimit        *int
+		RangeLimit              *uint64
 		OverrideCancun          *uint64 `toml:",omitempty"`
 		OverrideVerkle          *uint64 `toml:",omitempty"`
 	}
@@ -257,6 +263,12 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.RPCTxFeeCap != nil {
 		c.RPCTxFeeCap = *dec.RPCTxFeeCap
+	}
+	if dec.RPCLogQueryLimit != nil {
+		c.RPCLogQueryLimit = *dec.RPCLogQueryLimit
+	}
+	if dec.RangeLimit != nil {
+		c.RangeLimit = *dec.RangeLimit
 	}
 	if dec.OverrideCancun != nil {
 		c.OverrideCancun = dec.OverrideCancun

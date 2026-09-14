@@ -543,6 +543,18 @@ var (
 		Value:    ethconfig.Defaults.RPCGasCap,
 		Category: flags.APICategory,
 	}
+	RPCGlobalLogQueryLimitFlag = &cli.IntFlag{
+		Name:     "rpc.logquerylimit",
+		Usage:    "Sets a cap on how many addresses, or topics per position, a log filter may name (0=infinite)",
+		Value:    ethconfig.Defaults.RPCLogQueryLimit,
+		Category: flags.APICategory,
+	}
+	RPCGlobalRangeLimitFlag = &cli.Uint64Flag{
+		Name:     "rpc.rangelimit",
+		Usage:    "Sets a cap on the block range a single log query may cover (0=infinite)",
+		Value:    ethconfig.Defaults.RangeLimit,
+		Category: flags.APICategory,
+	}
 	RPCGlobalEVMTimeoutFlag = &cli.DurationFlag{
 		Name:     "rpc.evmtimeout",
 		Usage:    "Sets a timeout used for eth_call (0=infinite)",
@@ -1778,6 +1790,20 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	} else {
 		log.Info("Global gas cap disabled")
 	}
+	if ctx.IsSet(RPCGlobalLogQueryLimitFlag.Name) {
+		cfg.RPCLogQueryLimit = ctx.Int(RPCGlobalLogQueryLimitFlag.Name)
+	}
+	if cfg.RPCLogQueryLimit != 0 {
+		log.Info("Set global log query limit", "limit", cfg.RPCLogQueryLimit)
+	} else {
+		log.Info("Global log query limit disabled")
+	}
+	if ctx.IsSet(RPCGlobalRangeLimitFlag.Name) {
+		cfg.RangeLimit = ctx.Uint64(RPCGlobalRangeLimitFlag.Name)
+	}
+	if cfg.RangeLimit != 0 {
+		log.Info("Set global log query block-range limit", "limit", cfg.RangeLimit)
+	}
 	if ctx.IsSet(RPCGlobalEVMTimeoutFlag.Name) {
 		cfg.RPCEVMTimeout = ctx.Duration(RPCGlobalEVMTimeoutFlag.Name)
 	}
@@ -1953,7 +1979,9 @@ func RegisterGraphQLService(stack *node.Node, backend ethapi.Backend, filterSyst
 func RegisterFilterAPI(stack *node.Node, backend ethapi.Backend, ethcfg *ethconfig.Config) *filters.FilterSystem {
 	isLightClient := ethcfg.SyncMode == downloader.LightSync
 	filterSystem := filters.NewFilterSystem(backend, filters.Config{
-		LogCacheSize: ethcfg.FilterLogCacheSize,
+		LogCacheSize:  ethcfg.FilterLogCacheSize,
+		LogQueryLimit: ethcfg.RPCLogQueryLimit,
+		RangeLimit:    ethcfg.RangeLimit,
 	})
 	stack.RegisterAPIs([]rpc.API{{
 		Namespace: "eth",
