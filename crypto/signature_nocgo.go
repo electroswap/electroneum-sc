@@ -24,6 +24,7 @@ import (
 	"crypto/elliptic"
 	"errors"
 	"fmt"
+	"math/big"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	btc_ecdsa "github.com/btcsuite/btcd/btcec/v2/ecdsa"
@@ -58,7 +59,12 @@ func SigToPub(hash, sig []byte) (*ecdsa.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pub.ToECDSA(), nil
+	// Set the curve explicitly: S256 wraps btcec's curve to reject
+	// non-canonical coordinates, and ToECDSA would hand back the unwrapped
+	// one, so keys from here would not compare equal to generated keys.
+	out := pub.ToECDSA()
+	out.Curve = S256()
+	return out, nil
 }
 
 // Sign calculates an ECDSA signature.
@@ -73,7 +79,7 @@ func Sign(hash []byte, prv *ecdsa.PrivateKey) ([]byte, error) {
 	if len(hash) != 32 {
 		return nil, fmt.Errorf("hash is required to be exactly 32 bytes (%d)", len(hash))
 	}
-	if prv.Curve != btcec.S256() {
+	if prv.Curve != S256() {
 		return nil, errors.New("private key curve is not secp256k1")
 	}
 	// ecdsa.PrivateKey -> btcec.PrivateKey
@@ -128,7 +134,12 @@ func DecompressPubkey(pubkey []byte) (*ecdsa.PublicKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	return key.ToECDSA(), nil
+	// Set the curve explicitly: S256 wraps btcec's curve to reject
+	// non-canonical coordinates, and ToECDSA would hand back the unwrapped
+	// one, so keys from here would not compare equal to generated keys.
+	out := key.ToECDSA()
+	out.Curve = S256()
+	return out, nil
 }
 
 // CompressPubkey encodes a public key to the 33-byte compressed format. The
@@ -146,7 +157,28 @@ func CompressPubkey(pubkey *ecdsa.PublicKey) []byte {
 	return btcec.NewPublicKey(&x, &y).SerializeCompressed()
 }
 
+// btCurve wraps btcec's KoblitzCurve so IsOnCurve rejects non-canonical
+// coordinates. btcec converts the big.Int coordinates with FieldVal.SetByteSlice
+// and discards the overflow flag, so a coordinate >= P is silently reduced mod P
+// and can then be reported as on the curve. Callers that use IsOnCurve to
+// validate an untrusted point - ecies.GenerateShared does - need the strict
+// answer, otherwise the reduced point becomes an invalid-curve oracle.
+//
+// go-ethereum 1.13.2 returns btcec.S256() directly here; electroneum hung this
+// check on its own btCurve wrapper, which this tree does not carry. Same guard,
+// attached to the type this tree does have.
+type btCurve struct {
+	*btcec.KoblitzCurve
+}
+
+func (curve btCurve) IsOnCurve(x, y *big.Int) bool {
+	if x.Cmp(btcec.Params().P) >= 0 || y.Cmp(btcec.Params().P) >= 0 {
+		return false
+	}
+	return curve.KoblitzCurve.IsOnCurve(x, y)
+}
+
 // S256 returns an instance of the secp256k1 curve.
 func S256() elliptic.Curve {
-	return btcec.S256()
+	return btCurve{btcec.S256()}
 }
