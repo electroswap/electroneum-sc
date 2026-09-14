@@ -264,6 +264,58 @@ func TestDecryptShared2(t *testing.T) {
 	}
 }
 
+// TestDecryptShortBody is a regression test for a remote crash: a ciphertext
+// whose message body is shorter than the cipher block size used to slip past
+// the length gate in Decrypt and then panic inside symDecrypt at
+// ct[:params.BlockSize]. The handshake runs in a goroutine with no recover, so
+// the panic terminated the whole node process. The attacker is the connection
+// initiator, so it can compute a valid MAC and drive execution all the way to
+// symDecrypt — this test does the same to prove the fix, not just the MAC gate,
+// is what stops the panic.
+func TestDecryptShortBody(t *testing.T) {
+	prv, err := GenerateKey(rand.Reader, crypto.S256(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params, err := pubkeyParams(&prv.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Attacker's ephemeral key, and the shared secret against the victim's pub.
+	eph, err := GenerateKey(rand.Reader, crypto.S256(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	z, err := eph.GenerateShared(&prv.PublicKey, params.KeyLen, params.KeyLen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, Km := deriveKeys(params.Hash(), z, nil, params.KeyLen)
+
+	// A one-byte body: passes the old (rLen + hLen + 1) gate, too short for a
+	// full AES block.
+	body := []byte{0xBE}
+
+	// The port follows go-ethereum 1.13.2 and marshals through the stdlib
+	// helper rather than electroneum's crypto.EllipticCurve interface, which
+	// this tree does not carry. Same bytes either way.
+	Rb := elliptic.Marshal(prv.PublicKey.Curve, eph.PublicKey.X, eph.PublicKey.Y)
+
+	// Assemble R || body || MAC with a MAC that verifies, so Decrypt does not
+	// bail at the MAC check and instead reaches symDecrypt.
+	d := messageTag(params.Hash, Km, body, nil)
+	ct := make([]byte, 0, len(Rb)+len(body)+len(d))
+	ct = append(ct, Rb...)
+	ct = append(ct, body...)
+	ct = append(ct, d...)
+
+	// Must return an error, and must not panic.
+	if _, err := prv.Decrypt(ct, nil, nil); err != ErrInvalidMessage {
+		t.Fatalf("expected ErrInvalidMessage for short body, got %v", err)
+	}
+}
+
 type testCase struct {
 	Curve    elliptic.Curve
 	Name     string
